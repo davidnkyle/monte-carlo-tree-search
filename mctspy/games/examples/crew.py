@@ -55,6 +55,9 @@ def sample1_from_matrix(matrix):
 
 
 def sample_from_matrix(matrix):
+    # todo try random selection of values instead of starting with max
+    # but still take care of the ones first
+    # how does the distribution compare?
     matrix = copy(matrix)
     new = np.zeros(matrix.shape)
     goals = matrix.sum(axis=1)
@@ -165,10 +168,11 @@ class CooperativeGameNode():
         self._number_of_visits = np.zeros((state.players, DECK_SIZE))
         self._number_of_wins = np.zeros((state.players, DECK_SIZE))
         self._results = defaultdict(int)
-        self._untried_actions = None
+        # self._untried_actions = None
 
-    @property
-    def untried_actions(self):
+    # @property
+    def untried_actions(self, hand):
+        # todo instead of untried actions, look for which actions have a zero in any of the hand values
         if self._untried_actions is None:
             self._untried_actions = self.state.get_legal_actions()
         return self._untried_actions
@@ -183,7 +187,8 @@ class CooperativeGameNode():
 
     def is_fully_expanded(self, hand):
         # changed to incorperate the current hand
-        return len(set(hand).intersection(self.untried_actions)) == 0
+        # todo instead of untried actions, look for which actions have a zero in any of the hand values
+        return len(set(hand).intersection(self.untried_actions)) == 0 # todo no intersection needed
 
     def best_child(self,  hand, c_param=1.4):
         hand_vector = np.zeros(DECK_SIZE)
@@ -197,11 +202,11 @@ class CooperativeGameNode():
 
     def expand(self, hand):
         # edited to only consider the current hand
-        current_untried = [x for x in self.untried_actions if x in hand]
+        current_untried = [x for x in self.untried_actions if x in hand] # todo no intersection needed
         if len(current_untried) == 0:
             raise ValueError('You should only call this function if there is something to expand')
         action = current_untried[0]
-        self.untried_actions.remove(action)
+        # self.untried_actions.remove(action) todo change this
         # action = self.untried_actions.pop() # this removes it from _untried_actions attribute
         next_state = self.state.move(action)
         child_node = CooperativeGameNode(
