@@ -185,13 +185,13 @@ class CooperativeGameNode():
         # changed to incorperate the current hand
         return len(set(hand).intersection(self.untried_actions)) == 0
 
-    def best_child(self, c_param=1.4, hand=None):
-        # include a hand argument if limited
-        if hand is None:
-            hand = self.children
+    def best_child(self,  hand, c_param=1.4):
+        hand_vector = np.zeros(DECK_SIZE)
+        for c in hand:
+            hand_vector[DECK.index(c)] = 1
         choices_weights = [
-            (c.q / c.n) + c_param * np.sqrt((2 * np.log(self.n) / c.n))
-            for c in self.children if c in hand
+            np.dot(hand_vector, (c.q[self.state.turn, :] / c.n[self.state.turn, :]) + c_param * np.sqrt((2 * np.log(self.n[self.state.turn]) / c.n[c.state.turn])))
+            for c in self.children if c.parent_action in hand
         ]
         return self.children[np.argmax(choices_weights)]
 
@@ -262,7 +262,7 @@ class MCTSCrew(MonteCarloTreeSearch):
         # return self.root.best_child(c_param=0.)
 
     def best_action(self, hand):
-        return self.root.best_child(c_param=0.0, hand=hand)
+        return self.root.best_child(hand=hand, c_param=0.0)
 
     # def _generate_player_hands(self):
     #     # todo allow for different hand sizes
@@ -343,17 +343,6 @@ class MCTSCrew(MonteCarloTreeSearch):
 #
 
 if __name__ == '__main__':
-    # todo simulate a game right here
-    # make sure to update card matrix after each move
-    # random.seed(539)
-    # matrix = np.array([[0.4, 0.6, 0.4, 0.0, 0.3, 0.3, 0],
-    #                    [0.6, 0.4, 0.0, 0.0, 0.7, 0.3, 0],
-    #                    [0.0, 0.0, 0.6, 1.0, 0.0, 0.4, 0]])
-    #
-    # total = np.zeros(matrix.shape)
-    # for _ in range(10000):
-    #     sample = sample_from_matrix(matrix)
-    #     total += sample
     players = 3
     initial_board_state = CrewStatePublic()
     initial_hands = [[], [], []] # todo update this
