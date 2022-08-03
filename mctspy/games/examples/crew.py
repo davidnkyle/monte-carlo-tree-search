@@ -156,6 +156,9 @@ class CrewStatePublic():
     def get_legal_actions(self, hand):
         return [c for c in hand if self.is_move_legal(c, hand)]
 
+    def get_all_actions(self):
+        return copy(DECK)
+
 
 
 class CooperativeGameNode():
@@ -168,14 +171,14 @@ class CooperativeGameNode():
         self._number_of_visits = np.zeros((state.players, DECK_SIZE))
         self._number_of_wins = np.zeros((state.players, DECK_SIZE))
         self._results = defaultdict(int)
-        # self._untried_actions = None
+        self._all_untried_actions = None
 
     # @property
     def untried_actions(self, hand):
-        # todo instead of untried actions, look for which actions have a zero in any of the hand values
-        if self._untried_actions is None:
-            self._untried_actions = self.state.get_legal_actions()
-        return self._untried_actions
+        if self._all_untried_actions is None:
+            self._all_untried_actions = self.state.get_all_actions()
+        legal = self.state.get_legal_actions(hand)
+        return [a for a in self._all_untried_actions if a in legal]
 
     @property
     def q(self):
@@ -186,14 +189,27 @@ class CooperativeGameNode():
         return self._number_of_visits
 
     def is_fully_expanded(self, hand):
-        # changed to incorperate the current hand
-        # todo instead of untried actions, look for which actions have a zero in any of the hand values
-        return len(set(hand).intersection(self.untried_actions)) == 0 # todo no intersection needed
+        return len(self.untried_actions(hand)) == 0
 
     def best_child(self,  hand, c_param=1.4):
+        # todo oops fix this
         hand_vector = np.zeros(DECK_SIZE)
+        hand_indices = []
         for c in hand:
+            hand_indices.append(DECK.index(c))
             hand_vector[DECK.index(c)] = 1/len(hand)
+        best_child_idx = 0
+        for idx in range(len(self.children)):
+            c = self.children[idx]
+            hnd = copy(hand_indices)
+            hnd.remove(c.parent_action)
+            turn = self.state.turn
+            if c.parent_action in self.state.get_legal_actions():
+                if c.n[turn, hnd].min() == 0:
+                    return c
+                score = (c.q[turn, hnd] / c.n[turn, hnd]) + c_param * \
+                        np.sqrt((2 * np.log(self.n[turn, hnd]) / c.n[turn, hnd]))
+
         choices_weights = [
             np.dot(hand_vector, (c.q[self.state.turn, :] / c.n[self.state.turn, :]) + c_param * np.sqrt((2 * np.log(self.n[self.state.turn]) / c.n[c.state.turn])))
             for c in self.children if c.parent_action in hand
@@ -201,19 +217,34 @@ class CooperativeGameNode():
         return self.children[np.argmax(choices_weights)]
 
     def expand(self, hand):
-        # edited to only consider the current hand
-        current_untried = [x for x in self.untried_actions if x in hand] # todo no intersection needed
-        if len(current_untried) == 0:
-            raise ValueError('You should only call this function if there is something to expand')
-        action = current_untried[0]
-        # self.untried_actions.remove(action) todo change this
-        # action = self.untried_actions.pop() # this removes it from _untried_actions attribute
+        action = self.untried_actions(hand)[0]
+        self._all_untried_actions.remove(action)
         next_state = self.state.move(action)
         child_node = CooperativeGameNode(
             next_state, parent=self, parent_action=action
         )
         self.children.append(child_node)
         return child_node
+
+        # if self.is_terminal_node():
+        #     raise ValueError('Shouldnt call expand on terminal node')
+        # if len(self.children) > 0:
+        #     raise ValueError('Shoudnt call on node with children')
+        # for action in self.state.get_all_actions():
+        #     next_state = self.state.move(action)
+        #     child_node = CooperativeGameNode(
+        #         next_state, parent=self, parent_action=action
+        #     )
+        #     self.children.append(child_node)
+        # legal_actions = self.state.get_legal_actions(hand=hand)
+        # for c in self.children:
+        #     if c.parent_action in legal_actions:
+        #         for card in hand:
+        #             if card != c.parent_action and c.n[self.state.turn, DECK.index(card)] == 0:
+        #                 return c
+        # raise ValueError('You called expand when there were no untried actions')
+
+
 
     def is_terminal_node(self):
         return self.state.is_game_over()
@@ -277,16 +308,22 @@ class MCTSCrew(MonteCarloTreeSearch):
     #     for pl in range(sample.shape[1]):
     #         hands.append(sample)
 
-
-
     def _tree_policy(self, hands):
         current_node = self.root
         while not current_node.is_terminal_node():
-            if not current_node.is_fully_expanded(hand=hands[current_node.turn]):
-                return current_node.expand(hand=hands[current_node.turn])
+            if not current_node.is_fully_expanded(hands[current_node.turn]):
+                return current_node.expand()
             else:
-                current_node = current_node.best_child(hand=hands[current_node.turn])
+                current_node = current_node.best_child()
         return current_node
+    #
+    # def _tree_policy(self, hands):
+    #     current_node = self.root
+    #     while (not current_node.is_terminal_node()) and current_node.children > 0:
+    #         current_node = current_node.best_child(hand=hands[current_node.turn])
+    #     if (not current_node.is_terminal_node()) and current_node.children == 0:
+    #         current_node.expand()
+    #     return current_node
 
 #
 # class TrueCrewState(CrewState):
