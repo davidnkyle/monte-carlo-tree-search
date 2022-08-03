@@ -188,7 +188,7 @@ class CooperativeGameNode():
     def best_child(self,  hand, c_param=1.4):
         hand_vector = np.zeros(DECK_SIZE)
         for c in hand:
-            hand_vector[DECK.index(c)] = 1
+            hand_vector[DECK.index(c)] = 1/len(hand)
         choices_weights = [
             np.dot(hand_vector, (c.q[self.state.turn, :] / c.n[self.state.turn, :]) + c_param * np.sqrt((2 * np.log(self.n[self.state.turn]) / c.n[c.state.turn])))
             for c in self.children if c.parent_action in hand
