@@ -5,6 +5,8 @@ from copy import copy, deepcopy
 import numpy as np
 import random
 
+random.seed(331)
+
 from mctspy.tree.nodes import MonteCarloTreeSearchNode
 from mctspy.tree.search import MonteCarloTreeSearch
 
@@ -15,64 +17,30 @@ DECK = ['{}{}'.format(color, number) for color in 'bgpy' for number in range(1, 
 DECK_ARRAY = np.array(DECK)
 DECK_SIZE = len(DECK)
 
-# see https://arxiv.org/pdf/1012.0256.pdf
-def select_with_probs(v, w, m):
-    if m == 0:
-        return np.array([])
-    if len(v) != len(w):
-        raise ValueError('weights and values are unequal')
-    if m > len(v):
-        raise ValueError('m must be smaller than length of v')
-    # scale weights if not scaled already
-    w = w/w.sum()*m
-    # update overweight items
-    w[w>1] = 1
-    selection = v[0:m]
-    # total_weight = sum(w[0:m])
-    for k in range(m, len(v)):
-        # total_weight += w[k]
-        p = w[k]
-        if random.random() < p:
-            selection[random.randint(0, m-1)] = v[k]
-    return selection
-
-def sample1_from_matrix(matrix):
-    matrix = copy(matrix)
-    new = np.zeros(matrix.shape)
-    while matrix.max() > 0:
-        idx = matrix.max(axis=0).argmax()
-        player = random.choices(range(matrix.shape[0]), weights=matrix[:, idx])[0]
-        new[player, idx] = 1
-        matrix[:, idx] = 0
-        a = np.ceil(matrix.sum(axis=1))
-        b = matrix.sum(axis=1)
-        matrix = matrix*np.divide(a, b, out=np.zeros_like(a), where=b != 0)[:, None]
-        matrix[matrix > 1] = 1
-        leftover = 1 - matrix.sum(axis=0) + matrix[player, :]
-        leftover[matrix[player, :] < EPSILON] = 0
-        matrix[player, :] = leftover
-    return matrix
-
-
 def sample_from_matrix(matrix):
-    # todo try random selection of values instead of starting with max
-    # but still take care of the ones first
-    # how does the distribution compare?
+    total = matrix.sum()
     matrix = copy(matrix)
     new = np.zeros(matrix.shape)
-    goals = matrix.sum(axis=1)
+    cards_per_player = matrix.sum(axis=1)
     while matrix.max() > 0:
-        if matrix.max() > 1 - EPSILON:
-            idx = matrix.max(axis=0).argmax()
-        else:
-            idx = random.choices(range(matrix.shape[1]), weights=matrix.sum(axis=0))
+        non_zeros = np.count_nonzero(matrix, axis=0)
+        num = np.min(non_zeros[np.nonzero(non_zeros)])
+        idx = random.choices(np.where(non_zeros==num)[0])[0]
+        # if matrix.max() > 1 - EPSILON:
+        #     idx = matrix.max(axis=0).argmax()
+        # else:
+        #     idx = random.choices(range(matrix.shape[1]), weights=matrix.sum(axis=0))
         player = random.choices(range(matrix.shape[0]), weights=matrix[:, idx])[0]
         new[player, idx] = 1
         matrix[:, idx] = 0
-        if new[player, :].sum() > goals[player] - EPSILON:
+        if new[player, :].sum() > cards_per_player[player] - EPSILON:
+            if matrix[player, :].max() > 1 - EPSILON:
+                raise ValueError('impossible sample')
             matrix[player, :] = 0
             b = matrix.sum(axis=0)
             matrix = np.divide(matrix, b, out=np.zeros_like(matrix), where=b != 0)
+    if abs(new.sum() - total) > EPSILON:
+        raise ValueError('Uh oh')
     return new
 
 
@@ -83,11 +51,11 @@ def evaluate_trick(trick):
     suit = trick[0][0]
     cards = [c for c in trick if c[0] in (suit, 'z')]
     cards.sort(reverse=True)
-    return cards[0]
+    return trick.index(cards[0])
 
 
 class CrewStatePublic():
-    def __init__(self, players=3, num_goals=3, captain=None):
+    def __init__(self, players=3, num_goals=3, goals=None, captain=None):
         if (players < 3) or (players > 5):
             raise ValueError('Only allow between 3 and 5 players')
         self.players = players
@@ -97,10 +65,12 @@ class CrewStatePublic():
         # if self.captain is not None:
         #     self.possible_hands[-1,:] = 0
         #     self.possible_hands[-1,self.captain] = 1
-        self.leading = 0
-        self.turn = 0
+        self.leading = captain
+        self.turn = captain
         self.num_goals = num_goals
-        self.goals = [[] for _ in range(self.players)]
+        if goals is None:
+            goals = [[] for _ in range(self.players)]
+        self.goals = goals
         self.rounds_left = DECK_SIZE//self.players
         self.trick = []
 
@@ -166,7 +136,7 @@ class CrewStatePublic():
 
 class CooperativeGameNode():
 
-    def __init__(self, state, parent=None, parent_action=None):
+    def __init__(self, state, parent=None, parent_action=None, root=False):
         self.state = state
         self.parent = parent
         self.children = []
@@ -175,6 +145,7 @@ class CooperativeGameNode():
         self._number_of_wins = np.zeros((state.players, DECK_SIZE))
         self._results = defaultdict(int)
         self._all_untried_actions = None
+        self.root = root
 
     # @property
     def untried_actions(self, hand):
@@ -195,25 +166,26 @@ class CooperativeGameNode():
         return len(self.untried_actions(hand)) == 0
 
     def best_child(self,  hand, c_param=1.4):
-        hand_vector = np.zeros(DECK_SIZE)
-        hand_indices = []
-        for c in hand:
-            hand_indices.append(DECK.index(c))
-            hand_vector[DECK.index(c)] = 1/len(hand)
-        best_score = 0
-        best_child = self.children[0]
+        hand_indices = [DECK.index(c) for c in hand]
+        best_score = -np.inf
+        best_child = None
         for c in self.children:
             hnd = copy(hand_indices)
-            hnd.remove(c.parent_action)
             turn = self.state.turn
-            if c.parent_action in self.state.get_legal_actions():
-                if c.n[turn, hnd].min() == 0 or self.n[turn, hnd].min() == 0:
-                    return c
-                score = (c.q[turn, hnd] / c.n[turn, hnd]) + c_param * \
-                        np.sqrt((2 * np.log(self.n[turn, hnd]) / c.n[turn, hnd])).mean()
+            if c.parent_action in self.state.get_legal_actions(hand):
+                if c_param != 0:
+                    if c.n[turn, hnd].min() == 0 or self.n[turn, hnd].min() == 0:
+                        return c
+                    exploration = np.sqrt((2 * np.log(self.n[turn, hnd]) / c.n[turn, hnd]))
+                else:
+                    exploration = 0
+                b = c.n[turn, hnd]
+                score = (np.divide(c.q[turn, hnd], b, out=np.zeros_like(b), where=b != 0) + c_param * exploration).mean()
                 if score > best_score:
                     best_child = c
                     best_score = score
+        if best_child is None:
+            return self.expand(hand)
         return best_child
 
     def expand(self, hand):
@@ -231,17 +203,20 @@ class CooperativeGameNode():
 
     def rollout(self, hands):
         current_rollout_state = self.state
+        hands = deepcopy(hands)
         while not current_rollout_state.is_game_over():
-            possible_moves = current_rollout_state.get_legal_actions(hand=hands[current_rollout_state.turn])
+            hand = hands[current_rollout_state.turn]
+            possible_moves = current_rollout_state.get_legal_actions(hand=hand)
             action = self.rollout_policy(possible_moves)
             current_rollout_state = current_rollout_state.move(action)
+            hand.remove(action)
         return current_rollout_state.game_result
 
     def backpropagate(self, result, n_matrix):
-        self._number_of_visits += n_matrix
-        self._number_of_wins += n_matrix*result
-        if self.parent:
-            n_matrix[self.parent.turn, DECK.index(self.parent_action)] = 1
+        if self.parent and not self.root:
+            n_matrix[self.parent.state.turn, DECK.index(self.parent_action)] = 1
+            self._number_of_visits += n_matrix
+            self._number_of_wins += n_matrix*result
             self.parent.backpropagate(result, n_matrix)
 
     def rollout_policy(self, possible_moves):
@@ -253,6 +228,7 @@ class MCTSCrew():
     def __init__(self, node, card_matrix):
         self.root = node
         self.card_matrix = card_matrix
+        self.hands = None
 
 
     def create_tree(self, simulations_number=None, total_simulation_seconds=None):
@@ -261,19 +237,27 @@ class MCTSCrew():
             end_time = time.time() + total_simulation_seconds
             while True:
                 sample = sample_from_matrix(self.card_matrix)
-                hands = [DECK_ARRAY[np.where(sample[pl, :])] for pl in range(self.card_matrix.shape[0])]
-                v = self._tree_policy(hands=hands)
-                reward = v.rollout(hands=hands)
-                v.backpropagate(reward, n_matrix=np.zeros((v.state.players, DECK_SIZE)))
+                self.hands = [DECK_ARRAY[np.where(sample[pl, :])] for pl in range(self.card_matrix.shape[0])]
+                v = self._tree_policy()
+                reward = v.rollout(hands=self.hands)
+                n_matrix = np.zeros((v.state.players, DECK_SIZE))
+                for pl in range(v.state.players):
+                    n_matrix[pl, [DECK.index(c) for c in self.hands[pl]]] = 1
+                v.backpropagate(reward, n_matrix=n_matrix)
                 if time.time() > end_time:
                     break
         else:
             for _ in range(0, simulations_number):
                 sample = sample_from_matrix(self.card_matrix)
-                hands = [DECK_ARRAY[np.where(sample[pl, :])] for pl in range(self.card_matrix.shape[0])]
-                v = self._tree_policy(hands=hands)
-                reward = v.rollout(hands=hands)
-                v.backpropagate(reward, n_matrix=np.zeros((v.state.players, DECK_SIZE)))
+                if abs(sample.sum() - self.card_matrix.sum()) > EPSILON:
+                    raise ValueError('Hey now')
+                self.hands = [list(DECK_ARRAY[np.where(sample[pl, :])]) for pl in range(self.card_matrix.shape[0])]
+                v = self._tree_policy()
+                reward = v.rollout(hands=self.hands)
+                n_matrix = np.zeros((v.state.players, DECK_SIZE))
+                for pl in range(v.state.players):
+                    n_matrix[pl, [DECK.index(c) for c in self.hands[pl]]] = 1
+                v.backpropagate(reward, n_matrix=n_matrix)
         # to select best child go for exploitation only
         # return self.root.best_child(c_param=0.)
 
@@ -281,48 +265,69 @@ class MCTSCrew():
         return self.root.best_child(hand=hand, c_param=0.0)
 
 
-    def _tree_policy(self, hands):
+    def _tree_policy(self):
         current_node = self.root
         while not current_node.is_terminal_node():
-            if not current_node.is_fully_expanded(hands[current_node.turn]):
-                return current_node.expand()
+            hand = self.hands[current_node.state.turn]
+            if not current_node.is_fully_expanded(hand):
+                new_node = current_node.expand(hand)
+                hand.remove(new_node.parent_action)
+                return new_node
             else:
-                current_node = current_node.best_child()
+                current_node = current_node.best_child(hand)
+                hand.remove(current_node.parent_action)
         return current_node
 
 
 if __name__ == '__main__':
-    random.seed(329)
+
     players = 3
-    num_goals = 3
     deck = copy(DECK)
     random.shuffle(deck)
     initial_hands = [deck[(i * DECK_SIZE) // players:((i + 1) * DECK_SIZE) // players] for i in range(players)]
     true_hands = deepcopy(initial_hands)
     captain = ['z4' in hand for hand in initial_hands].index(True)
-    initial_board_state = CrewStatePublic(players=players, num_goals=num_goals, captain=captain)
+    num_goals = 3
+    goals = [[] for _ in range(players)]
+    goal_deck = copy(DECK[0:-4])
+    random.shuffle(goal_deck)
+    for idx in range(captain, captain + num_goals):
+        goals[idx % players].append(goal_deck.pop(0))
+    initial_board_state = CrewStatePublic(players=players, num_goals=num_goals, goals=goals, captain=captain)
     hand_size = np.array([len(h) for h in initial_hands])
     hand_size[captain] -= 1
-    cm = np.ones((players, DECK_SIZE))*hand_size/(DECK_SIZE-1)
+    cm = np.ones((players, DECK_SIZE))*hand_size[:,None]/(DECK_SIZE-1)
     cm[:, DECK_SIZE-1] = 0
     cm[captain, DECK_SIZE-1] = 1
     board_state = initial_board_state
+    rounds_left = 13
+    print('leading: {}'.format(board_state.leading))
+    root = CooperativeGameNode(state=board_state, root=True)
     while board_state.game_result is None:
-        root = CooperativeGameNode(state=board_state)
         mcts = MCTSCrew(root, card_matrix=cm)
-        simulations = 10000
+        simulations = 5000
         mcts.create_tree(simulations)
         best_node = mcts.best_action(true_hands[board_state.turn])
         true_hands[board_state.turn].remove(best_node.parent_action)
-        cm = best_node.n/simulations
+        act_idx = DECK.index(best_node.parent_action)
+        # print(best_node.n)
+        # todo update matrix so that only truly impossible actions are impossible
+        cm = best_node.n/best_node.n[board_state.turn, act_idx]
+        # todo there are some zeros showing up here in the denominator, fix it
+        cm[:, act_idx] = 0
+        if abs(cm.sum()-round(cm.sum())) > EPSILON:
+            raise ValueError('Hey now')
+        if best_node.state.rounds_left < rounds_left:
+            print(board_state.trick + [best_node.parent_action])
+            print(best_node.state.goals)
+            print()
+            print('leading: {}'.format(best_node.state.leading))
+            rounds_left = best_node.state.rounds_left
         board_state = best_node.state
-        print(board_state.board)
-    # matrix = np.array([[0.4, 0.6, 0.4, 0.0, 0.3, 0.3, 0],
-    #                    [0.6, 0.4, 0.0, 0.0, 0.7, 0.3, 0],
-    #                    [0.0, 0.0, 0.6, 1.0, 0.0, 0.4, 0]])
-    # totals = np.zeros((3, 7))
-    # for _ in range(10000):
-    #     new = sample_from_matrix(matrix)
-    #     totals += new
+        best_node.root = True
+        root = best_node
+    print('result {}'.format(board_state.game_result))
+    print('rounds left {}'.format(board_state.rounds_left))
+
 
 
