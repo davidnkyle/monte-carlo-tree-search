@@ -62,7 +62,10 @@ def sample_from_matrix(matrix):
     new = np.zeros(matrix.shape)
     goals = matrix.sum(axis=1)
     while matrix.max() > 0:
-        idx = matrix.max(axis=0).argmax()
+        if matrix.max() > 1 - EPSILON:
+            idx = matrix.max(axis=0).argmax()
+        else:
+            idx = random.choices(range(matrix.shape[1]), weights=matrix.sum(axis=0))
         player = random.choices(range(matrix.shape[0]), weights=matrix[:, idx])[0]
         new[player, idx] = 1
         matrix[:, idx] = 0
@@ -192,29 +195,26 @@ class CooperativeGameNode():
         return len(self.untried_actions(hand)) == 0
 
     def best_child(self,  hand, c_param=1.4):
-        # todo oops fix this
         hand_vector = np.zeros(DECK_SIZE)
         hand_indices = []
         for c in hand:
             hand_indices.append(DECK.index(c))
             hand_vector[DECK.index(c)] = 1/len(hand)
-        best_child_idx = 0
-        for idx in range(len(self.children)):
-            c = self.children[idx]
+        best_score = 0
+        best_child = self.children[0]
+        for c in self.children:
             hnd = copy(hand_indices)
             hnd.remove(c.parent_action)
             turn = self.state.turn
             if c.parent_action in self.state.get_legal_actions():
-                if c.n[turn, hnd].min() == 0:
+                if c.n[turn, hnd].min() == 0 or self.n[turn, hnd].min() == 0:
                     return c
                 score = (c.q[turn, hnd] / c.n[turn, hnd]) + c_param * \
-                        np.sqrt((2 * np.log(self.n[turn, hnd]) / c.n[turn, hnd]))
-
-        choices_weights = [
-            np.dot(hand_vector, (c.q[self.state.turn, :] / c.n[self.state.turn, :]) + c_param * np.sqrt((2 * np.log(self.n[self.state.turn]) / c.n[c.state.turn])))
-            for c in self.children if c.parent_action in hand
-        ]
-        return self.children[np.argmax(choices_weights)]
+                        np.sqrt((2 * np.log(self.n[turn, hnd]) / c.n[turn, hnd])).mean()
+                if score > best_score:
+                    best_child = c
+                    best_score = score
+        return best_child
 
     def expand(self, hand):
         action = self.untried_actions(hand)[0]
@@ -225,26 +225,6 @@ class CooperativeGameNode():
         )
         self.children.append(child_node)
         return child_node
-
-        # if self.is_terminal_node():
-        #     raise ValueError('Shouldnt call expand on terminal node')
-        # if len(self.children) > 0:
-        #     raise ValueError('Shoudnt call on node with children')
-        # for action in self.state.get_all_actions():
-        #     next_state = self.state.move(action)
-        #     child_node = CooperativeGameNode(
-        #         next_state, parent=self, parent_action=action
-        #     )
-        #     self.children.append(child_node)
-        # legal_actions = self.state.get_legal_actions(hand=hand)
-        # for c in self.children:
-        #     if c.parent_action in legal_actions:
-        #         for card in hand:
-        #             if card != c.parent_action and c.n[self.state.turn, DECK.index(card)] == 0:
-        #                 return c
-        # raise ValueError('You called expand when there were no untried actions')
-
-
 
     def is_terminal_node(self):
         return self.state.is_game_over()
@@ -269,9 +249,9 @@ class CooperativeGameNode():
 
 
 
-class MCTSCrew(MonteCarloTreeSearch):
+class MCTSCrew():
     def __init__(self, node, card_matrix):
-        super().__init__(node)
+        self.root = node
         self.card_matrix = card_matrix
 
 
@@ -300,13 +280,6 @@ class MCTSCrew(MonteCarloTreeSearch):
     def best_action(self, hand):
         return self.root.best_child(hand=hand, c_param=0.0)
 
-    # def _generate_player_hands(self):
-    #     # todo allow for different hand sizes
-    #     new_card_matrix = copy(self.card_matrix)
-    #     sample = sample_from_matrix(new_card_matrix)
-    #     hands = []
-    #     for pl in range(sample.shape[1]):
-    #         hands.append(sample)
 
     def _tree_policy(self, hands):
         current_node = self.root
@@ -316,81 +289,23 @@ class MCTSCrew(MonteCarloTreeSearch):
             else:
                 current_node = current_node.best_child()
         return current_node
-    #
-    # def _tree_policy(self, hands):
-    #     current_node = self.root
-    #     while (not current_node.is_terminal_node()) and current_node.children > 0:
-    #         current_node = current_node.best_child(hand=hands[current_node.turn])
-    #     if (not current_node.is_terminal_node()) and current_node.children == 0:
-    #         current_node.expand()
-    #     return current_node
 
-#
-# class TrueCrewState(CrewState):
-#     def __init__(self, players=3, num_goals=3):
-#         super().__init__(players=players, num_goals=num_goals)
-#
-#         # deal cards and determine captain
-#         self._deal_cards()
-#         self.discard = []
-#         self.captain = 0
-#         self.leading = 0
-#         self.turn = 0
-#         for pl in range(self.players):
-#             if 'b4' in self.hands[pl]:
-#                 self.captain = pl
-#                 break
-#         self.leading = self.captain
-#         self.turn = self.captain
-#
-#         # deal goals
-#         self.num_goals = num_goals
-#         self._deal_goals()
-#
-#         # other attributes
-#         self.rounds_left = DECK_SIZE//self.players
-#         self.trick = []
-#
-#     def _deal_cards(self):
-#         deck = copy(DECK)
-#         random.shuffle(deck)
-#         self.hands = [deck[(i * DECK_SIZE) // self.players:((i + 1) * DECK_SIZE) // self.players] for i in range(self.players)]
-#
-#     def is_move_legal(self, move):
-#         hand = self.hands[self.turn]
-#         if not move in hand: # you dont have this card in your hand
-#             return False
-#         if len(self.trick) > 0:
-#             leading_suit = self.trick[0][0] # you must follow suit if you can
-#             if leading_suit in [c[0] for c in hand]:
-#                 return move[0] == leading_suit
-#         return True
-#
-#     def move(self, move):
-#         if not self.is_move_legal(move):
-#             raise ValueError('Illegal move')
-#         new = self.move(move)
-#         new.hands[self.turn].remove(move)
-#         return new
-#
-#     def get_legal_actions(self):
-#         return self.hands[self.turn]
-#
-#
-#
-# class CrewStatePublic(CrewState):
-#     def __init__(self, players=3, num_goals=3):
-#         super().__init__(players=players, num_goals=num_goals)
-#         self.possible_hands = np.ones((DECK_SIZE, self.players))
-#
 
 if __name__ == '__main__':
+    random.seed(329)
     players = 3
-    initial_board_state = CrewStatePublic()
-    initial_hands = [[], [], []] # todo update this
+    num_goals = 3
+    deck = copy(DECK)
+    random.shuffle(deck)
+    initial_hands = [deck[(i * DECK_SIZE) // players:((i + 1) * DECK_SIZE) // players] for i in range(players)]
     true_hands = deepcopy(initial_hands)
-    # todo change this to be an actual starting card matrix
-    cm = np.ones((players, DECK_SIZE)) * 13 / DECK_SIZE
+    captain = ['z4' in hand for hand in initial_hands].index(True)
+    initial_board_state = CrewStatePublic(players=players, num_goals=num_goals, captain=captain)
+    hand_size = np.array([len(h) for h in initial_hands])
+    hand_size[captain] -= 1
+    cm = np.ones((players, DECK_SIZE))*hand_size/(DECK_SIZE-1)
+    cm[:, DECK_SIZE-1] = 0
+    cm[captain, DECK_SIZE-1] = 1
     board_state = initial_board_state
     while board_state.game_result is None:
         root = CooperativeGameNode(state=board_state)
@@ -402,5 +317,12 @@ if __name__ == '__main__':
         cm = best_node.n/simulations
         board_state = best_node.state
         print(board_state.board)
+    # matrix = np.array([[0.4, 0.6, 0.4, 0.0, 0.3, 0.3, 0],
+    #                    [0.6, 0.4, 0.0, 0.0, 0.7, 0.3, 0],
+    #                    [0.0, 0.0, 0.6, 1.0, 0.0, 0.4, 0]])
+    # totals = np.zeros((3, 7))
+    # for _ in range(10000):
+    #     new = sample_from_matrix(matrix)
+    #     totals += new
 
 
