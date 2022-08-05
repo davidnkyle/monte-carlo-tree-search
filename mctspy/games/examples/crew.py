@@ -5,7 +5,7 @@ from copy import copy, deepcopy
 import numpy as np
 import random
 
-random.seed(331)
+random.seed(334)
 
 from mctspy.tree.nodes import MonteCarloTreeSearchNode
 from mctspy.tree.search import MonteCarloTreeSearch
@@ -17,19 +17,15 @@ DECK = ['{}{}'.format(color, number) for color in 'bgpy' for number in range(1, 
 DECK_ARRAY = np.array(DECK)
 DECK_SIZE = len(DECK)
 
-def sample_from_matrix(matrix):
-    total = matrix.sum()
+def sample_from_matrix(matrix, cards_per_player):
+    total = sum(cards_per_player)
     matrix = copy(matrix)
     new = np.zeros(matrix.shape)
-    cards_per_player = matrix.sum(axis=1)
+    # cards_per_player = matrix.sum(axis=1)
     while matrix.max() > 0:
         non_zeros = np.count_nonzero(matrix, axis=0)
         num = np.min(non_zeros[np.nonzero(non_zeros)])
         idx = random.choices(np.where(non_zeros==num)[0])[0]
-        # if matrix.max() > 1 - EPSILON:
-        #     idx = matrix.max(axis=0).argmax()
-        # else:
-        #     idx = random.choices(range(matrix.shape[1]), weights=matrix.sum(axis=0))
         player = random.choices(range(matrix.shape[0]), weights=matrix[:, idx])[0]
         new[player, idx] = 1
         matrix[:, idx] = 0
@@ -73,6 +69,13 @@ class CrewStatePublic():
         self.goals = goals
         self.rounds_left = DECK_SIZE//self.players
         self.trick = []
+        self.num_cards_per_player = [self.rounds_left for _ in range(self.players)]
+        if self.players == 3:
+            self.num_cards_per_player[2] += 1
+        self.possible_cards = np.ones((self.players, DECK_SIZE))
+        self.possible_cards[:, DECK.index('z4')] = 0
+        self.possible_cards[self.captain, DECK.index('z4')] = 1
+
 
     def _deal_goals(self):
         cards = random.sample(DECK, self.num_goals)
@@ -99,12 +102,15 @@ class CrewStatePublic():
 
     def move(self, move):
         new = deepcopy(self)
-        # new.hands[new.turn].remove(move)
-        # new.possible_hands[DECK.index(move), :] = 0 # nobody has the card that was just played
-        # if len(self.trick) > 0 and self.trick[0][0] != move[0]: # short suited
-        #     suit_id = SUITS.index(self.trick[0][0])
-        #     new.possible_hands[suit_id*9:(suit_id+1)*9, self.turn] = 0
         new.trick.append(move)
+        new.num_cards_per_player[self.turn] -= 1
+        new.possible_cards[:, DECK.index(move)] = 0  # nobody has the card that was just played
+        if len(new.trick) > 1:
+            # if player did not follow suit they dont have any of that suit
+            leading_suit = new.trick[0][0]
+            if move[0] != leading_suit:
+                start = SUITS.index(leading_suit)
+                new.possible_cards[self.turn, start*9:(start+1)*9] = 0
         if len(new.trick) < new.players:
             new.turn = (new.turn + 1) % self.players
             return new
@@ -236,7 +242,13 @@ class MCTSCrew():
             assert (total_simulation_seconds is not None)
             end_time = time.time() + total_simulation_seconds
             while True:
-                sample = sample_from_matrix(self.card_matrix)
+                attempts = 20
+                while attempts > 0:
+                    try:
+                        sample = sample_from_matrix(self.card_matrix, self.root.state.num_cards_per_player)
+                        break
+                    except ValueError:
+                        attempts -= 1
                 self.hands = [DECK_ARRAY[np.where(sample[pl, :])] for pl in range(self.card_matrix.shape[0])]
                 v = self._tree_policy()
                 reward = v.rollout(hands=self.hands)
@@ -248,7 +260,13 @@ class MCTSCrew():
                     break
         else:
             for _ in range(0, simulations_number):
-                sample = sample_from_matrix(self.card_matrix)
+                attempts = 20
+                while attempts > 0:
+                    try:
+                        sample = sample_from_matrix(self.card_matrix, self.root.state.num_cards_per_player)
+                        break
+                    except ValueError:
+                        attempts -= 1
                 if abs(sample.sum() - self.card_matrix.sum()) > EPSILON:
                     raise ValueError('Hey now')
                 self.hands = [list(DECK_ARRAY[np.where(sample[pl, :])]) for pl in range(self.card_matrix.shape[0])]
@@ -311,12 +329,14 @@ if __name__ == '__main__':
         true_hands[board_state.turn].remove(best_node.parent_action)
         act_idx = DECK.index(best_node.parent_action)
         # print(best_node.n)
-        # todo update matrix so that only truly impossible actions are impossible
-        cm = best_node.n/best_node.n[board_state.turn, act_idx]
-        # todo there are some zeros showing up here in the denominator, fix it
-        cm[:, act_idx] = 0
-        if abs(cm.sum()-round(cm.sum())) > EPSILON:
+        nm = best_node.n/best_node.n[board_state.turn, act_idx]
+        nm[:, act_idx] = 0
+        if abs(nm.sum()-round(nm.sum())) > EPSILON:
             raise ValueError('Hey now')
+        possible = best_node.state.possible_cards
+        row_total = possible.sum(axis=0)
+        possible = np.divide(possible, row_total, out=np.zeros_like(possible), where=row_total != 0)
+        cm = 0.99*nm + 0.01*possible
         if best_node.state.rounds_left < rounds_left:
             print(board_state.trick + [best_node.parent_action])
             print(best_node.state.goals)
