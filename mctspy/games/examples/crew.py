@@ -5,6 +5,8 @@ from copy import copy, deepcopy
 import numpy as np
 import random
 
+import pandas as pd
+
 random.seed(336)
 
 # implement communication signal
@@ -17,33 +19,38 @@ SUITS = 'bgpyz'
 DECK = ['{}{}'.format(color, number) for color in 'bgpy' for number in range(1, 10)] + \
     ['z{}'.format(number) for number in range(1, 5)]
 COMMS = ['{}{}{}'.format(color, number, modifier) for color in 'bgpy' for number in range(1, 10) for modifier in 'hol']
-weights = [1, 1, 1, 1, 1, 1, 2, 3, 5]
-deck_weights = weights*4 + [5, 5, 7, 10]
-DECK_WEIGHTS = np.array(deck_weights + deck_weights + [5, 5, 5, 5, 5])
+# weights = [1, 1, 1, 1, 1, 1, 2, 3, 5]
+# deck_weights = weights*4 + [5, 5, 7, 10]
+# DECK_WEIGHTS = np.array(deck_weights + deck_weights + [5, 5, 5, 5, 5])
 DECK_ARRAY = np.array(DECK)
 DECK_SIZE = len(DECK)
-
-def sample_from_matrix(matrix, cards_per_player):
-    total = sum(cards_per_player)
-    matrix = copy(matrix)
-    new = np.zeros(matrix.shape)
-    # cards_per_player = matrix.sum(axis=1)
-    while matrix.max() > 0:
-        non_zeros = np.count_nonzero(matrix, axis=0)
-        num = np.min(non_zeros[np.nonzero(non_zeros)])
-        idx = random.choices(np.where(non_zeros==num)[0])[0]
-        player = random.choices(range(matrix.shape[0]), weights=matrix[:, idx])[0]
-        new[player, idx] = 1
-        matrix[:, idx] = 0
-        if new[player, :].sum() > cards_per_player[player] - EPSILON:
-            if matrix[player, :].max() > 1 - EPSILON:
-                raise ValueError('impossible sample')
-            matrix[player, :] = 0
-            b = matrix.sum(axis=0)
-            matrix = np.divide(matrix, b, out=np.zeros_like(matrix), where=b != 0)
-    if abs(new.sum() - total) > EPSILON:
-        raise ValueError('Uh oh')
-    return new
+FEATURES = ['short_suited_{}' for suit in SUITS] + \
+    ['only_{}'.format(c) for c in DECK] + \
+    ['highest_{}'.format(c) for c in DECK] + \
+    ['lowest_{}'.format(c) for c in DECK] + \
+    ['no_{}'.format(c) for c in DECK]
+#
+# def sample_from_matrix(matrix, cards_per_player):
+#     total = sum(cards_per_player)
+#     matrix = copy(matrix)
+#     new = np.zeros(matrix.shape)
+#     # cards_per_player = matrix.sum(axis=1)
+#     while matrix.max() > 0:
+#         non_zeros = np.count_nonzero(matrix, axis=0)
+#         num = np.min(non_zeros[np.nonzero(non_zeros)])
+#         idx = random.choices(np.where(non_zeros==num)[0])[0]
+#         player = random.choices(range(matrix.shape[0]), weights=matrix[:, idx])[0]
+#         new[player, idx] = 1
+#         matrix[:, idx] = 0
+#         if new[player, :].sum() > cards_per_player[player] - EPSILON:
+#             if matrix[player, :].max() > 1 - EPSILON:
+#                 raise ValueError('impossible sample')
+#             matrix[player, :] = 0
+#             b = matrix.sum(axis=0)
+#             matrix = np.divide(matrix, b, out=np.zeros_like(matrix), where=b != 0)
+#     if abs(new.sum() - total) > EPSILON:
+#         raise ValueError('Uh oh')
+#     return new
 
 
 
@@ -62,7 +69,10 @@ class CrewStatePublic():
             raise ValueError('Only allow between 3 and 5 players')
         self.players = players
         self.discard = []
+        self.known_cards = [[] for _ in range(self.players)]
         self.captain = captain
+        if self.captain:
+            self.known_cards[self.captain].append('z4')
         self.leading = captain
         self.turn = captain
         self.num_goals = num_goals
@@ -78,12 +88,15 @@ class CrewStatePublic():
         self.num_cards_per_player = [self.rounds_left for _ in range(self.players)]
         if self.players == 3:
             self.num_cards_per_player[2] += 1
-        self.possible_cards = np.ones((self.players, DECK_SIZE))
-        self.possible_cards[:, DECK.index('z4')] = 0
-        self.possible_cards[self.captain, DECK.index('z4')] = 1
-        self.weights = copy(DECK_WEIGHTS)
-        for goal in self.goal_cards:
-            self.weights[DECK.index(goal)] += 10
+        self.possible_cards = pd.DataFrame(index=DECK, columns=range(self.players), data=1)
+        # self.possible_cards = np.ones((self.players, DECK_SIZE))
+        # self.possible_cards[:, DECK.index('z4')] = 0
+        # self.possible_cards[self.captain, DECK.index('z4')] = 1
+        if self.captain:
+            self.possible_cards.drop('z4', inplace=True)
+        # self.weights = copy(DECK_WEIGHTS)
+        # for goal in self.goal_cards:
+        #     self.weights[DECK.index(goal)] += 10
 
 
     def _deal_goals(self):
@@ -159,14 +172,14 @@ class CrewStatePublic():
         new.rounds_left -= 1
         new.leading = winner
         new.turn = winner
-        new.communication_phase = True
-        if new.coms[new.turn] is not None:
-            while new.communication_phase:
-                new.turn = (new.turn + 1) % new.players
-                if new.turn == new.leading:
-                    new.communication_phase = False
-                if new.coms[new.turn] is None:
-                    break
+        # new.communication_phase = True
+        # if new.coms[new.turn] is not None:
+        #     while new.communication_phase:
+        #         new.turn = (new.turn + 1) % new.players
+        #         if new.turn == new.leading:
+        #             new.communication_phase = False
+        #         if new.coms[new.turn] is None:
+        #             break
         return new
 
     def is_move_legal(self, move, hand):
@@ -222,24 +235,24 @@ class CrewStatePublic():
                 return copy(COMMS) + [None]
             return [None]
         return copy(DECK)
-
-    def get_feature_idx(self, hand):
-        idxs = []
-        for i in range(DECK_SIZE):
-            if DECK[i] in hand:
-                idxs.append(i)
-            else:
-                idxs.append(i + DECK_SIZE)
-        str_hand = ''.join(hand)
-        for j in range(len(SUITS)):
-            if SUITS[j] not in str_hand:
-                idxs.append(j + 2*DECK_SIZE)
-        return idxs
-
-    def get_feature_vector(self, hand):
-        v = np.zeros(DECK_SIZE*2 + 5)
-        v[self.get_feature_idx(hand)] = 1
-        return v
+    #
+    # def get_feature_idx(self, hand):
+    #     idxs = []
+    #     for i in range(DECK_SIZE):
+    #         if DECK[i] in hand:
+    #             idxs.append(i)
+    #         else:
+    #             idxs.append(i + DECK_SIZE)
+    #     str_hand = ''.join(hand)
+    #     for j in range(len(SUITS)):
+    #         if SUITS[j] not in str_hand:
+    #             idxs.append(j + 2*DECK_SIZE)
+    #     return idxs
+    #
+    # def get_feature_vector(self, hand):
+    #     v = np.zeros(DECK_SIZE*2 + 5)
+    #     v[self.get_feature_idx(hand)] = 1
+    #     return v
 
     # def flesh_out(self):
     #     if np.less(self.possible_cards.sum(axis=1), self.num_cards_per_player).any():
@@ -251,15 +264,18 @@ class CrewStatePublic():
 
 class CooperativeGameNode():
 
-    def __init__(self, state, parent=None, parent_action=None, root=False):
+    def __init__(self, state, unknown_hands, valid_sample, parent=None, parent_action=None, root=False):
         self.state = state
         self.parent = parent
         self.children = []
+        self.unknown_hands = deepcopy(unknown_hands)
+        self.valid_sample = valid_sample
         self.parent_action = parent_action # add a parameter for parent action
-        self._n = np.zeros((state.players, DECK_SIZE*2 + 5))
-        self._N = np.zeros((state.players, DECK_SIZE * 2 + 5))
+        self._n = pd.DataFrame(index=FEATURES, columns=range(self.state.players), data=0)
+        # self._n = np.zeros((state.players, DECK_SIZE*2 + 5))
+        # self._N = np.zeros((state.players, DECK_SIZE * 2 + 5))
         self._number_of_visits_total = 0
-        self._number_of_wins = np.zeros((state.players, DECK_SIZE * 2 + 5))
+        self._number_of_wins = pd.DataFrame(index=FEATURES, columns=range(self.state.players), data=0)
         self._number_of_wins_total = 0
         self._results = defaultdict(int)
         self._all_untried_actions = None
