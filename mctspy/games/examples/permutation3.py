@@ -3,7 +3,8 @@ import random
 
 import pandas as pd
 
-# possibility_matrix = pd.read_csv('possibility_matrix .csv')
+possibility_matrix = pd.read_csv('possibility_matrix2.csv', index_col='Unnamed: 0')
+possibility_matrix.columns = range(3)
 features_example = pd.read_csv('features_example.csv', index_col='Unnamed: 0')
 features_example.columns = range(3)
 starting_matrix = pd.read_csv('starting_matrix2.csv', index_col='Unnamed: 0')

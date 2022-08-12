@@ -7,6 +7,11 @@ import random
 
 import pandas as pd
 
+from mctspy.games.examples.crew_game_state import SUITS, DECK, DECK_SIZE, CrewStatePublic, FEATURES
+from mctspy.games.examples.permutation3 import features_from_hand
+
+
+
 random.seed(336)
 
 # implement communication signal
@@ -15,251 +20,6 @@ from mctspy.tree.nodes import MonteCarloTreeSearchNode
 from mctspy.tree.search import MonteCarloTreeSearch
 
 EPSILON = 0.000000000001
-SUITS = 'bgpyz'
-DECK = ['{}{}'.format(color, number) for color in 'bgpy' for number in range(1, 10)] + \
-    ['z{}'.format(number) for number in range(1, 5)]
-COMMS = ['{}{}{}'.format(color, number, modifier) for color in 'bgpy' for number in range(1, 10) for modifier in 'hol']
-# weights = [1, 1, 1, 1, 1, 1, 2, 3, 5]
-# deck_weights = weights*4 + [5, 5, 7, 10]
-# DECK_WEIGHTS = np.array(deck_weights + deck_weights + [5, 5, 5, 5, 5])
-DECK_ARRAY = np.array(DECK)
-DECK_SIZE = len(DECK)
-FEATURES = ['short_suited_{}' for suit in SUITS] + \
-    ['only_{}'.format(c) for c in DECK] + \
-    ['highest_{}'.format(c) for c in DECK] + \
-    ['lowest_{}'.format(c) for c in DECK] + \
-    ['no_{}'.format(c) for c in DECK]
-#
-# def sample_from_matrix(matrix, cards_per_player):
-#     total = sum(cards_per_player)
-#     matrix = copy(matrix)
-#     new = np.zeros(matrix.shape)
-#     # cards_per_player = matrix.sum(axis=1)
-#     while matrix.max() > 0:
-#         non_zeros = np.count_nonzero(matrix, axis=0)
-#         num = np.min(non_zeros[np.nonzero(non_zeros)])
-#         idx = random.choices(np.where(non_zeros==num)[0])[0]
-#         player = random.choices(range(matrix.shape[0]), weights=matrix[:, idx])[0]
-#         new[player, idx] = 1
-#         matrix[:, idx] = 0
-#         if new[player, :].sum() > cards_per_player[player] - EPSILON:
-#             if matrix[player, :].max() > 1 - EPSILON:
-#                 raise ValueError('impossible sample')
-#             matrix[player, :] = 0
-#             b = matrix.sum(axis=0)
-#             matrix = np.divide(matrix, b, out=np.zeros_like(matrix), where=b != 0)
-#     if abs(new.sum() - total) > EPSILON:
-#         raise ValueError('Uh oh')
-#     return new
-
-
-
-def evaluate_trick(trick):
-    if len(trick) == 0:
-        raise ValueError('No trick to evaluate')
-    suit = trick[0][0]
-    cards = [c for c in trick if c[0] in (suit, 'z')]
-    cards.sort(reverse=True)
-    return trick.index(cards[0])
-
-
-class CrewStatePublic():
-    def __init__(self, players=3, num_goals=3, goal_cards=None, captain=None):
-        if (players < 3) or (players > 5):
-            raise ValueError('Only allow between 3 and 5 players')
-        self.players = players
-        self.discard = []
-        self.known_cards = [[] for _ in range(self.players)]
-        self.captain = captain
-        if self.captain:
-            self.known_cards[self.captain].append('z4')
-        self.leading = captain
-        self.turn = captain
-        self.num_goals = num_goals
-        self.select_goals_phase = True
-        self.communication_phase = False
-        self.coms = [None for _ in range(self.players)]
-        if goal_cards is None:
-            goal_cards = []
-        self.goal_cards = goal_cards
-        self.goals = [[] for _ in range(self.players)]
-        self.rounds_left = DECK_SIZE//self.players
-        self.trick = []
-        self.num_cards_per_player = [self.rounds_left for _ in range(self.players)]
-        if self.players == 3:
-            self.num_cards_per_player[2] += 1
-        self.possible_cards = pd.DataFrame(index=DECK, columns=range(self.players), data=1)
-        # self.possible_cards = np.ones((self.players, DECK_SIZE))
-        # self.possible_cards[:, DECK.index('z4')] = 0
-        # self.possible_cards[self.captain, DECK.index('z4')] = 1
-        if self.captain:
-            self.possible_cards.drop('z4', inplace=True)
-        # self.weights = copy(DECK_WEIGHTS)
-        # for goal in self.goal_cards:
-        #     self.weights[DECK.index(goal)] += 10
-
-
-    def _deal_goals(self):
-        cards = random.sample(DECK, self.num_goals)
-        self.goals = [[] for _ in range(self.players)]
-        i = self.captain
-        for c in cards:
-            self.goals[i].append(c)
-            i = (i+1)%self.players
-
-    @property
-    def game_result(self):
-        if not self.select_goals_phase:
-            for pl in self.goals:
-                for c in pl:
-                    if c in self.discard:
-                        return 0 # if the goal is still active and in the discard pile, there is no way to win
-            if all([len(g) == 0 for g in self.goals]):
-                return 1
-            if self.rounds_left == 0:
-                return 0
-        return None
-
-    def is_game_over(self):
-        return self.game_result is not None
-
-    def move(self, move):
-        new = deepcopy(self)
-        if new.select_goals_phase:
-            new.goals[new.turn].append(move)
-            new.goal_cards.remove(move)
-            new.turn = (new.turn + 1) % self.players
-            if len(new.goal_cards) == 0:
-                new.select_goals_phase = False
-                new.communication_phase = True
-                new.turn = new.captain
-            return new
-        if new.communication_phase:
-            if move is not None:
-                if new.coms[new.turn] is not None:
-                    raise ValueError('can only communicate once')
-                new.coms[new.turn] = move
-                idx = DECK.index(move[:2])
-                new.possible_cards[:, idx] = 0
-                if move[2] in ['o', 'h']:
-                    new.possible_cards[new.turn, idx+1:(idx//9 + 1)*9] = 0
-                if move[2] in ['o', 'l']:
-                    new.possible_cards[new.turn, (idx // 9) * 9:idx] = 0
-                new.possible_cards[new.turn, idx] = 1
-            while new.communication_phase:
-                new.turn = (new.turn + 1) % new.players
-                if new.turn == new.leading:
-                    new.communication_phase = False
-                if new.coms[new.turn] is None:
-                    break
-            return new
-        new.trick.append(move)
-        new.num_cards_per_player[self.turn] -= 1
-        new.possible_cards[:, DECK.index(move)] = 0  # nobody has the card that was just played
-        if len(new.trick) > 1:
-            # if player did not follow suit they dont have any of that suit
-            leading_suit = new.trick[0][0]
-            if move[0] != leading_suit:
-                start = SUITS.index(leading_suit)
-                new.possible_cards[self.turn, start*9:(start+1)*9] = 0
-        if len(new.trick) < new.players:
-            new.turn = (new.turn + 1) % self.players
-            return new
-        winner = (evaluate_trick(new.trick) + new.leading) % new.players
-        new.goals[winner] = list(set(new.goals[winner]).difference(new.trick)) # remove any goals in the trick
-        new.discard += new.trick # add trick to discard
-        new.trick = []
-        new.rounds_left -= 1
-        new.leading = winner
-        new.turn = winner
-        # new.communication_phase = True
-        # if new.coms[new.turn] is not None:
-        #     while new.communication_phase:
-        #         new.turn = (new.turn + 1) % new.players
-        #         if new.turn == new.leading:
-        #             new.communication_phase = False
-        #         if new.coms[new.turn] is None:
-        #             break
-        return new
-
-    def is_move_legal(self, move, hand):
-        if self.select_goals_phase:
-            return move in self.goal_cards
-        if self.communication_phase:
-            if move is None:
-                return True
-            if move[0] not in 'bgpy':
-                return False
-            in_suit = [c for c in hand if c[0]==move[0]]
-            in_suit.sort()
-            if len(in_suit) == 1:
-                if move[2] == 'o':
-                    return in_suit[0] == move
-            elif len(in_suit) > 1:
-                if move[2] == 'h':
-                    return in_suit[-1] == move
-                elif move[2] == 'l':
-                    return in_suit[0] == move
-            return False
-        if not move in hand: # you dont have this card in your hand
-            return False
-        if len(self.trick) > 0:
-            leading_suit = self.trick[0][0] # you must follow suit if you can
-            if leading_suit in [c[0] for c in hand]:
-                return move[0] == leading_suit
-        return True
-
-    def get_legal_actions(self, hand):
-        if self.select_goals_phase:
-            return self.goal_cards
-        if self.communication_phase:
-            allowable = [None]
-            if self.coms[self.turn] is None:
-                sort_hand = copy(hand)
-                sort_hand.sort()
-                for suit in 'bgpy':
-                    in_suit = [c for c in hand if c[0] == suit]
-                    if len(in_suit) == 1:
-                        allowable.append(in_suit[0] + 'o')
-                    elif len(in_suit) > 1:
-                        allowable.append(in_suit[0] + 'l')
-                        allowable.append(in_suit[-1] + 'h')
-            return allowable
-        return [c for c in hand if self.is_move_legal(c, hand)]
-
-    def get_all_actions(self):
-        if self.select_goals_phase:
-            return copy(self.goal_cards)
-        if self.communication_phase:
-            if self.coms[self.turn] is None:
-                return copy(COMMS) + [None]
-            return [None]
-        return copy(DECK)
-    #
-    # def get_feature_idx(self, hand):
-    #     idxs = []
-    #     for i in range(DECK_SIZE):
-    #         if DECK[i] in hand:
-    #             idxs.append(i)
-    #         else:
-    #             idxs.append(i + DECK_SIZE)
-    #     str_hand = ''.join(hand)
-    #     for j in range(len(SUITS)):
-    #         if SUITS[j] not in str_hand:
-    #             idxs.append(j + 2*DECK_SIZE)
-    #     return idxs
-    #
-    # def get_feature_vector(self, hand):
-    #     v = np.zeros(DECK_SIZE*2 + 5)
-    #     v[self.get_feature_idx(hand)] = 1
-    #     return v
-
-    # def flesh_out(self):
-    #     if np.less(self.possible_cards.sum(axis=1), self.num_cards_per_player).any():
-    #         raise ValueError('Impossible matrix')
-    #     if np.less(self.possible_cards.sum(axis=0), 1).any():
-    #         raise ValueError('Impossible matrix')
-    #
 
 
 class CooperativeGameNode():
@@ -282,11 +42,16 @@ class CooperativeGameNode():
         self.root = root
 
     # @property
-    def untried_actions(self, hand):
+    def untried_actions(self):
         if self._all_untried_actions is None:
             self._all_untried_actions = self.state.get_all_actions()
-        legal = self.state.get_legal_actions(hand)
+        legal = self.state.get_legal_actions(self.hand)
         return [a for a in self._all_untried_actions if a in legal]
+
+    @property
+    def hand(self):
+        turn = self.state.turn
+        return self.state.known_hands[turn] + self.unknown_hands[turn]
 
     @property
     def q(self):
@@ -296,31 +61,38 @@ class CooperativeGameNode():
     def n(self):
         return self._n
 
-    def is_fully_expanded(self, hand):
-        return len(self.untried_actions(hand)) == 0
+    def is_fully_expanded(self):
+        return len(self.untried_actions()) == 0
 
-    def best_child(self,  hand, c_param=1.4):
-        hand_indices = self.state.get_feature_idx(hand)
+
+    def best_child(self, unknown_hand, c_param=1.4):
+
         best_score = -np.inf
         best_child = None
         for c in self.children:
-            hnd = copy(hand_indices)
             turn = self.state.turn
-            if c.parent_action in self.state.get_legal_actions(hand):
+            c_unkown_hand = list(set(unknown_hand).difference(c.state.known_hands[turn]))
+            full_hand = c.state.known_hands[turn] + c_unkown_hand
+            if c.parent_action in self.state.get_legal_actions(full_hand):
+                if best_child is None:
+                    best_child = c
+                features = features_from_hand(c_unkown_hand)
                 if c_param != 0:
-                    if c.n[turn, hnd].min() == 0 or self._N[turn, hnd].min() == 0:
+                    rel_features = [f for f in features if self.state.feature_weights[f] == 1]
+                    if c.n[rel_features, turn] == 0:
                         return c
-                    exploration = np.sqrt((2 * np.log(self._N[turn, hnd]) / c.n[turn, hnd]))
-                else:
-                    exploration = 0
-                b = c.n[turn, hnd]
-                vector = np.divide(c.q[turn, hnd], b, out=np.zeros_like(b), where=b != 0) + c_param * exploration
-                score = np.average(vector, weights=self.state.weights[hnd])
+                exploration = np.sqrt((2 * np.log(self._number_of_visits_total) / c._number_of_visits_total))
+                weights = c.state.feature_weights[features]
+                weights = weights/weights.sum()
+                score = (c.q[features, turn]/c.n[features, turn]*weights).sum() + c_param*exploration
+                # vector = np.divide(c.q[rel_features, turn], b, out=np.zeros_like(b), where=b != 0) + c_param * exploration
+                # score = np.average(vector, weights=[self.state.feature_weights[f] for f in rel_features])
                 if score > best_score:
                     best_child = c
                     best_score = score
+
         if best_child is None:
-            return self.expand(hand)
+            return self.expand(self.state.known_hands[self.state.turn] + unknown_hand)
         return best_child
 
     def expand(self, hand):
