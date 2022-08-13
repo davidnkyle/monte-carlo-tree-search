@@ -7,8 +7,7 @@ import random
 
 import pandas as pd
 
-from mctspy.games.examples.crew_game_state import SUITS, DECK, DECK_SIZE, CrewStatePublic, FEATURES
-from mctspy.games.examples.permutation3 import features_from_hand
+from mctspy.games.examples.crew_game_state import SUITS, DECK, DECK_SIZE, CrewStatePublic
 
 
 
@@ -21,125 +20,6 @@ from mctspy.tree.search import MonteCarloTreeSearch
 
 EPSILON = 0.000000000001
 
-
-class CooperativeGameNode():
-
-    def __init__(self, state, unknown_hands, valid_sample, parent=None, parent_action=None, root=False):
-        self.state = state
-        self.parent = parent
-        self.children = []
-        self.unknown_hands = deepcopy(unknown_hands)
-        self.valid_sample = valid_sample
-        self.parent_action = parent_action # add a parameter for parent action
-        self._n = pd.DataFrame(index=FEATURES, columns=range(self.state.players), data=0)
-        # self._n = np.zeros((state.players, DECK_SIZE*2 + 5))
-        # self._N = np.zeros((state.players, DECK_SIZE * 2 + 5))
-        self._number_of_visits_total = 0
-        self._number_of_wins = pd.DataFrame(index=FEATURES, columns=range(self.state.players), data=0)
-        self._number_of_wins_total = 0
-        self._results = defaultdict(int)
-        self._all_untried_actions = None
-        self.root = root
-
-    # @property
-    def untried_actions(self):
-        if self._all_untried_actions is None:
-            self._all_untried_actions = self.state.get_all_actions()
-        legal = self.state.get_legal_actions(self.hand)
-        return [a for a in self._all_untried_actions if a in legal]
-
-    @property
-    def hand(self):
-        turn = self.state.turn
-        return self.state.known_hands[turn] + self.unknown_hands[turn]
-
-    @property
-    def q(self):
-        return self._number_of_wins
-
-    @property
-    def n(self):
-        return self._n
-
-    def is_fully_expanded(self):
-        return len(self.untried_actions()) == 0
-
-
-    def best_child(self, unknown_hand, c_param=1.4):
-
-        best_score = -np.inf
-        best_child = None
-        for c in self.children:
-            turn = self.state.turn
-            c_unkown_hand = list(set(unknown_hand).difference(c.state.known_hands[turn]))
-            full_hand = c.state.known_hands[turn] + c_unkown_hand
-            if c.parent_action in self.state.get_legal_actions(full_hand):
-                if best_child is None:
-                    best_child = c
-                features = features_from_hand(c_unkown_hand)
-                if c_param != 0:
-                    rel_features = [f for f in features if self.state.feature_weights[f] == 1]
-                    if c.n[rel_features, turn] == 0:
-                        return c
-                exploration = np.sqrt((2 * np.log(self._number_of_visits_total) / c._number_of_visits_total))
-                weights = c.state.feature_weights[features]
-                weights = weights/weights.sum()
-                score = (c.q[features, turn]/c.n[features, turn]*weights).sum() + c_param*exploration
-                # vector = np.divide(c.q[rel_features, turn], b, out=np.zeros_like(b), where=b != 0) + c_param * exploration
-                # score = np.average(vector, weights=[self.state.feature_weights[f] for f in rel_features])
-                if score > best_score:
-                    best_child = c
-                    best_score = score
-
-        if best_child is None:
-            return self.expand(self.state.known_hands[self.state.turn] + unknown_hand)
-        return best_child
-
-    def expand(self, hand):
-        action = self.untried_actions(hand)[0]
-        self._all_untried_actions.remove(action)
-        next_state = self.state.move(action)
-        child_node = CooperativeGameNode(
-            next_state, parent=self, parent_action=action
-        )
-        self.children.append(child_node)
-        return child_node
-
-    def is_terminal_node(self):
-        return self.state.is_game_over()
-
-    def rollout(self, hands):
-        current_rollout_state = self.state
-        hands = deepcopy(hands)
-        while not current_rollout_state.is_game_over():
-            hand = hands[current_rollout_state.turn]
-            possible_moves = current_rollout_state.get_legal_actions(hand=hand)
-            action = self.rollout_policy(possible_moves)
-            select_phase = current_rollout_state.select_goals_phase
-            com_phase = current_rollout_state.communication_phase
-            current_rollout_state = current_rollout_state.move(action)
-            if not select_phase and not com_phase:
-                hand.remove(action)
-        return current_rollout_state.game_result
-
-    def backpropagate(self, result, n_matrix):
-        self._N += n_matrix
-        if self.parent and not self.parent.state.select_goals_phase and not self.parent.state.communication_phase:
-            turn = self.parent.state.turn
-            idx = DECK.index(self.parent_action)
-            n_matrix[turn, idx] = 1
-            n_matrix[turn, idx+DECK_SIZE] = 0
-            # update the short suited attribute
-            n_matrix[turn, 2*DECK_SIZE:] = [n_matrix[turn, DECK_SIZE+j*9:DECK_SIZE + min((j+1)*9, DECK_SIZE)].min() for j in range(len(SUITS))]
-        self._n += n_matrix
-        self._number_of_visits_total += 1
-        self._number_of_wins += n_matrix*result
-        self._number_of_wins_total += result
-        if self.parent and not self.root:
-            self.parent.backpropagate(result, n_matrix)
-
-    def rollout_policy(self, possible_moves):
-        return possible_moves[np.random.randint(len(possible_moves))]
 
 
 

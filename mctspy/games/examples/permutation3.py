@@ -48,28 +48,6 @@ def hands_from_sample(sample, players):
         hands[pl].append(c)
     return hands
 
-def features_from_hand(hand):
-    features = []
-    hand = copy(hand)
-    hand.sort()
-    for suit in 'bgpyz':
-        subset = [c for c in hand if suit in c]
-        if len(subset) == 0:
-            features.append('short_suited_{}'.format(suit))
-        elif len(subset) == 1:
-            features.append('only_{}'.format(subset[0]))
-        else:
-            features.append('highest_{}'.format(subset[-1]))
-            features.append('lowest_{}'.format(subset[0]))
-            max_card = 9
-            if suit == 'z':
-                max_card = 4
-            for c in ['{}{}'.format(suit, n) for n in range(1, max_card+1)]:
-                if c in subset:
-                    features.append('has_{}'.format(c))
-                else:
-                    features.append('no_{}'.format(c))
-    return features
 
 
 new = starting_cards

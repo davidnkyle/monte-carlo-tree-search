@@ -1,29 +1,21 @@
+import itertools
+
 import numpy as np
-import random
+# import random
 import pandas as pd
 from copy import copy, deepcopy
 
-SUITS = 'bgpyz'
-DECK = ['{}{}'.format(color, number) for color in 'bgpy' for number in range(1, 10)] + \
-    ['z{}'.format(number) for number in range(1, 5)]
-COMMS = ['{}{}{}'.format(color, number, modifier) for color in 'bgpy' for number in range(1, 10) for modifier in 'hol']
+non_trump = 'bgp'
+trump = 'z'
+SUITS = non_trump + trump
+DECK = ['{}{}'.format(color, number) for color in non_trump for number in range(1, 5)] + \
+    ['{}{}'.format(trump, number) for number in range(1, 3)]
+COMMS = ['{}{}{}'.format(color, number, modifier) for color in non_trump for number in range(1, 10) for modifier in 'hol']
 # weights = [1, 1, 1, 1, 1, 1, 2, 3, 5]
 # deck_weights = weights*4 + [5, 5, 7, 10]
 # DECK_WEIGHTS = np.array(deck_weights + deck_weights + [5, 5, 5, 5, 5])
 DECK_ARRAY = np.array(DECK)
 DECK_SIZE = len(DECK)
-FEATURES = ['short_suited_{}' for suit in SUITS] + \
-    ['only_{}'.format(c) for c in DECK] + \
-    ['highest_{}'.format(c) for c in DECK] + \
-    ['lowest_{}'.format(c) for c in DECK] + \
-    ['has_{}'.format(c) for c in DECK] + \
-    ['no_{}'.format(c) for c in DECK]
-FEATURE_DICT_BASE = pd.Series()
-for f in FEATURES:
-    if ('has' not in f) and ('no' not in f):
-        FEATURE_DICT_BASE[f] = 1
-    else:
-        FEATURE_DICT_BASE[f] = 0
 
 
 def evaluate_trick(trick):
@@ -56,10 +48,6 @@ class CrewStatePublic():
         if goal_cards is None:
             goal_cards = []
         self.goal_cards = goal_cards
-        self.feature_weights = FEATURE_DICT_BASE
-        for goal in self.goal_cards:
-            self.feature_weights['has_{}'.format(goal)] = 1
-            self.feature_weights['has_{}'.format(goal)] = 0
         self.goals = [[] for _ in range(self.players)]
         self.rounds_left = DECK_SIZE//self.players
         self.trick = []
@@ -82,13 +70,21 @@ class CrewStatePublic():
         if flesh_out:
             self.flesh_out_possibilities()
 
-    def _deal_goals(self):
-        cards = random.sample(DECK, self.num_goals)
-        self.goals = [[] for _ in range(self.players)]
-        i = self.captain
-        for c in cards:
-            self.goals[i].append(c)
-            i = (i+1)%self.players
+    # def _deal_goals(self):
+    #     cards = random.sample(DECK, self.num_goals)
+    #     self.goals = [[] for _ in range(self.players)]
+    #     i = self.captain
+    #     for c in cards:
+    #         self.goals[i].append(c)
+    #         i = (i+1)%self.players
+
+    @property
+    def known_cards(self):
+        known_hands = list(itertools.chain.from_iterable(self.known_hands))
+        return known_hands + self.trick + self.discard
+
+    def unknown_hand(self, hand):
+        return list(set(hand).difference(self.known_cards))
 
     @property
     def game_result(self):
@@ -200,15 +196,19 @@ class CrewStatePublic():
         #             break
         return new
 
-    def is_move_legal(self, move, hand):
+    def full_hand(self, unknown_hand):
+        return list(set(self.known_hands[self.turn]).union(unknown_hand))
+
+    def is_move_legal(self, move, unknown_hand):
         if self.select_goals_phase:
             return move in self.goal_cards
+        full_hand = self.full_hand(unknown_hand)
         if self.communication_phase:
             if move is None:
                 return True
             if move[0] not in 'bgpy':
                 return False
-            in_suit = [c for c in hand if c[0]==move[0]]
+            in_suit = [c for c in full_hand if c[0]==move[0]]
             in_suit.sort()
             if len(in_suit) == 1:
                 if move[2] == 'o':
@@ -219,31 +219,32 @@ class CrewStatePublic():
                 elif move[2] == 'l':
                     return in_suit[0] == move
             return False
-        if not move in hand: # you dont have this card in your hand
+        if not move in full_hand: # you dont have this card in your hand
             return False
         if len(self.trick) > 0:
             leading_suit = self.trick[0][0] # you must follow suit if you can
-            if leading_suit in [c[0] for c in hand]:
+            if leading_suit in [c[0] for c in full_hand]:
                 return move[0] == leading_suit
         return True
 
-    def get_legal_actions(self, hand):
+    def get_legal_actions(self, unknown_hand):
+        full_hand = self.full_hand(unknown_hand)
         if self.select_goals_phase:
             return self.goal_cards
         if self.communication_phase:
             allowable = [None]
             if self.coms[self.turn] is None:
-                sort_hand = copy(hand)
+                sort_hand = copy(full_hand)
                 sort_hand.sort()
                 for suit in 'bgpy':
-                    in_suit = [c for c in hand if c[0] == suit]
+                    in_suit = [c for c in full_hand if c[0] == suit]
                     if len(in_suit) == 1:
                         allowable.append(in_suit[0] + 'o')
                     elif len(in_suit) > 1:
                         allowable.append(in_suit[0] + 'l')
                         allowable.append(in_suit[-1] + 'h')
             return allowable
-        return [c for c in hand if self.is_move_legal(c, hand)]
+        return [c for c in full_hand if self.is_move_legal(c, full_hand)]
 
     def get_all_actions(self):
         if self.select_goals_phase:
@@ -280,34 +281,23 @@ class CrewStatePublic():
     #
 
 if __name__ == '__main__':
-    game = CrewStatePublic(players=3, goal_cards=['g3', 'p9', 'y5'], captain=1)
-    game = game.move('p9')
-    game = game.move('g3')
-    game = game.move('y5')
-    game = game.move('y7l')
-    game = game.move('g8o')
-    game = game.move('g6h')
-    game = game.move('p9')
-    game = game.move('p3')
-    game = game.move('p6')
-    game = game.move('g7')
-    game = game.move('g8')
-    game = game.move('g3')
-    game = game.move('y3')
-    game = game.move('z1')
-    game = game.move('z2')
-    game = game.move('b3')
-    game = game.move('z3')
+    game = CrewStatePublic(players=3, goal_cards=['g3', 'p1', 'b4'], captain=1)
+    game = game.move('p1')
     game = game.move('b4')
-    game = game.move('p8')
-    game = game.move('p7')
-    game = game.move('p5')
-    game = game.move('p4')
-    game = game.move('p2')
+    game = game.move('g3')
+    game = game.move('p2h')
+    game = game.move('b4o')
+    game = game.move('g3h')
+    game = game.move('z2')
+    game = game.move('p1')
+    game = game.move('z1')
+    game = game.move('b2')
+    game = game.move('b4')
     game = game.move('b1')
-    game = game.move('y1')
+    game = game.move('p3')
     game = game.move('g1')
-    game = game.move('y7')
+    game = game.move('p2')
     game = game.move('g2')
-    game = game.move('y5')
-    game = game.move('g6')
+    game = game.move('g3')
+    game = game.move('g4')
+    print(game.game_result)
