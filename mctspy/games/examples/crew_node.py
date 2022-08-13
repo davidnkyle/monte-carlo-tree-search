@@ -4,10 +4,12 @@ import numpy as np
 import pandas as pd
 from copy import copy, deepcopy
 
-# import random
-# random.seed(35)
-np.random.seed(392)
-print(np.random.randint(0, 100))
+import random
+random.seed(35)
+np.random.seed(396)
+
+
+
 
 from mctspy.games.examples.crew_game_state import SUITS, DECK, CrewStatePublic
 
@@ -124,19 +126,19 @@ class CooperativeGameNode():
         :param c_param:
         :return:
         """
-        unknown_hand = self.state.unknown_cards(parent_hand)
+        unknown_hand = self.state.unknown_hand(parent_hand)
         weights = self.features_from_hand(unknown_hand, weights=True)
         # weights = features.loc[self.n[self.state.turn] > 0] # only consider weights where n is positive
-        n = self.n[weights.index, self.state.turn]
-        score_per_feat = self.q[weights.index, self.state.turn] / n
+        n = self.n.loc[weights.index, self.parent.state.turn]
+        score_per_feat = self.q.loc[weights.index, self.parent.state.turn] / n
         score_per_feat.loc[n == 0] = 0
         if c_param != 0:
             if self.parent._number_of_visits_total == 0:
                 raise ZeroDivisionError('You cant score a node that whose parent has never been visited')
             exploration = np.log(self.parent._number_of_visits_total) / n
             score_per_feat = score_per_feat + c_param * exploration
-        score = score_per_feat * weights / weights.sum()
-        return score
+        scores = score_per_feat * weights / weights.sum()
+        return scores.sum()
 
     def best_child(self, hand, c_param=0.0):
         """ determine the best move from this node given the hand provided
@@ -148,11 +150,12 @@ class CooperativeGameNode():
         """
         if self.state.is_game_over():
             raise ValueError('dont ask for the next best move if the game is already over')
-        legal_actions = self.state.get_legal_actions(hand)
+        uhand = self.state.unknown_hand(hand)
+        legal_actions = self.state.get_legal_actions(uhand)
         valid_children = [c for c in self.children if c.parent_action in legal_actions]
         if len(valid_children) == 0:
             raise ValueError('This node is a leaf!')
-        best_child = max(valid_children, key=lambda x: x.score(c_param=c_param, parent_hand=hand))
+        best_child = max(valid_children, key=lambda x: x.score(c_param=c_param, parent_hand=uhand))
         return best_child
 
     def select(self):
@@ -211,7 +214,11 @@ class CooperativeGameNode():
     def rollout(self):
         current_rollout_state = self.state
         unknown_hands = deepcopy(self.unknown_hands)
+        # game_states = []
+        # unknown_hand_states = []
         while not current_rollout_state.is_game_over():
+            # game_states.append(current_rollout_state)
+            # unknown_hand_states.append(unknown_hands)
             turn = current_rollout_state.turn
             hand = unknown_hands[current_rollout_state.turn]
             possible_moves = current_rollout_state.get_legal_actions(hand)
@@ -253,7 +260,7 @@ class CooperativeGameNode():
     def rollout_policy(self, possible_moves):
         next_move = np.random.randint(len(possible_moves))
         print(next_move)
-        return possible_moves[next_move]
+        return possible_moves[next_move%len(possible_moves)]
 
 if __name__ == '__main__':
 
@@ -262,7 +269,16 @@ if __name__ == '__main__':
     for goal in game.goal_cards:
         weights['has_{}'.format(goal)] = 1
         weights['no_{}'.format(goal)] = 1
-    root = CooperativeGameNode(game, unknown_hands=[['b1', 'g2', 'g3', 'p4'], ['g1', 'g4', 'p2', 'p3'], ['b2', 'b3', 'b4', 'p1', 'z1']], root=True, feature_weights=weights)
+    uhands = [['b1', 'g2', 'g3', 'p4'], ['g1', 'g4', 'p2', 'p3'], ['b2', 'b3', 'b4', 'p1', 'z1']]
+    root = CooperativeGameNode(game, unknown_hands=uhands, root=True, feature_weights=weights)
     node = root.expand()
     result = node.rollout()
     node.backpropagate(result)
+    bc = root.best_child(uhands[1])
+    score = root.children[0].score(uhands[1])
+    uhands1 = [['b1', 'g2', 'p1', 'z1'], ['g1', 'g4',  'g3', 'p4'], ['b2', 'b3', 'b4', 'p2', 'p3']]
+    root.unknown_hands = uhands1
+    node1 = root.expand()
+    result1 = node1.rollout()
+    node1.backpropagate(result1)
+    bc1 = root.best_child(uhands1[1])

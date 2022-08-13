@@ -84,7 +84,8 @@ class CrewStatePublic():
         return known_hands + self.trick + self.discard
 
     def unknown_hand(self, hand):
-        return list(set(hand).difference(self.known_cards))
+        kc = self.known_cards
+        return [c for c in hand if c not in kc]
 
     @property
     def game_result(self):
@@ -149,12 +150,14 @@ class CrewStatePublic():
                 if move[2] in ['o', 'h']:
                     if num < 9:
                         upper_index = new.possible_cards.filter(regex='{}[{}-9]'.format(move[0], num+1), axis=0).index
-                        new.possible_cards.loc[upper_index, new.turn] = 0
+                        if not upper_index.empty and new.turn in new.possible_cards.columns:
+                            new.possible_cards.loc[upper_index, new.turn] = 0
                         # new.possible_cards[new.turn, idx+1:(idx//9 + 1)*9] = 0
                 if move[2] in ['o', 'l']:
                     if num > 1:
                         lower_index = new.possible_cards.filter(regex='{}[1-{}]'.format(move[0], num-1), axis=0).index
-                        new.possible_cards.loc[lower_index, new.turn] = 0
+                        if not lower_index.empty and new.turn in new.possible_cards.columns:
+                            new.possible_cards.loc[lower_index, new.turn] = 0
                         # new.possible_cards[new.turn, (idx // 9) * 9:idx] = 0
                 new.flesh_out_possibilities()
             while new.communication_phase:
@@ -172,7 +175,8 @@ class CrewStatePublic():
             leading_suit = new.trick[0][0]
             if move[0] != leading_suit:
                 suit_index = new.possible_cards.filter(regex=leading_suit, axis=0).index
-                new.possible_cards.loc[suit_index, new.turn] = 0
+                if not suit_index.empty and new.turn in new.possible_cards.columns:
+                    new.possible_cards.loc[suit_index, new.turn] = 0
                 new.flesh_out_possibilities()
                 # start = SUITS.index(leading_suit)
                 # new.possible_cards[self.turn, start*9:(start+1)*9] = 0
@@ -180,7 +184,8 @@ class CrewStatePublic():
             new.turn = (new.turn + 1) % self.players
             return new
         winner = (evaluate_trick(new.trick) + new.leading) % new.players
-        new.goals[winner] = list(set(new.goals[winner]).difference(new.trick)) # remove any goals in the trick
+        new.goals[winner] = [g for g in new.goals[winner] if g not in new.trick]
+        # new.goals[winner] = list(set(new.goals[winner]).difference(new.trick)) # remove any goals in the trick
         new.discard += new.trick # add trick to discard
         new.trick = []
         new.rounds_left -= 1
@@ -197,7 +202,7 @@ class CrewStatePublic():
         return new
 
     def full_hand(self, unknown_hand):
-        return list(set(self.known_hands[self.turn]).union(unknown_hand))
+        return self.known_hands[self.turn] + unknown_hand
 
     def is_move_legal(self, move, unknown_hand):
         if self.select_goals_phase:
@@ -237,7 +242,7 @@ class CrewStatePublic():
                 sort_hand = copy(full_hand)
                 sort_hand.sort()
                 for suit in 'bgpy':
-                    in_suit = [c for c in full_hand if c[0] == suit]
+                    in_suit = [c for c in sort_hand if c[0] == suit]
                     if len(in_suit) == 1:
                         allowable.append(in_suit[0] + 'o')
                     elif len(in_suit) > 1:
