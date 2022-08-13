@@ -259,7 +259,7 @@ class CooperativeGameNode():
 
     def rollout_policy(self, possible_moves):
         next_move = np.random.randint(len(possible_moves))
-        print(next_move)
+        # print(next_move)
         return possible_moves[next_move%len(possible_moves)]
 
 if __name__ == '__main__':
