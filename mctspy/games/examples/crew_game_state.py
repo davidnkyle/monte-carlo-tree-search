@@ -1,7 +1,6 @@
 import itertools
 
 import numpy as np
-# import random
 import pandas as pd
 from copy import copy, deepcopy
 
@@ -135,7 +134,7 @@ class CrewStatePublic():
             new.turn = (new.turn + 1) % self.players
             if len(new.goal_cards) == 0:
                 new.select_goals_phase = False
-                new.communication_phase = True
+                # new.communication_phase = True
                 new.turn = new.captain
             return new
         if new.communication_phase:

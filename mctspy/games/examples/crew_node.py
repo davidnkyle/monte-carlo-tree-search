@@ -4,16 +4,28 @@ import numpy as np
 import pandas as pd
 from copy import copy, deepcopy
 
-import random
-random.seed(35)
-np.random.seed(396)
+
 
 
 
 
 from mctspy.games.examples.crew_game_state import SUITS, DECK, CrewStatePublic
+from mctspy.games.examples.integer_programming import initial_sample
 
 
+def card_list_to_series(card_list):
+    card_series = pd.Series(dtype=int)
+    for pl in range(len(card_list)):
+        for card in card_list[pl]:
+            card_series[card] = pl
+    return card_series
+
+
+def card_series_to_list(card_series, num_players):
+    card_list = [[] for _ in range(num_players)]
+    for card, player in card_series.iteritems():
+        card_list[player].append(card)
+    return card_list
 
 FEATURES = ['short_suited_{}'.format(suit) for suit in SUITS] + \
     ['only_{}'.format(c) for c in DECK] + \
@@ -115,7 +127,7 @@ class CooperativeGameNode():
             return weighted
         return pd.Series(data=1, index=features)
 
-    def score(self, parent_hand, c_param=0.5):
+    def score(self, parent_hand, c_param):
         """ weighted score
         if hand has no features, then error
         if parent node has never been visited then error
@@ -140,7 +152,7 @@ class CooperativeGameNode():
         scores = score_per_feat * weights / weights.sum()
         return scores.sum()
 
-    def best_child(self, hand, c_param=0.0):
+    def best_child(self, hand, c_param=0.0, expand_if_necessary=False):
         """ determine the best move from this node given the hand provided
         if the node has no children with from the valid actions, an error is thrown
         otherwise the child with the max score (no exploration constant) is chosen
@@ -154,6 +166,16 @@ class CooperativeGameNode():
         legal_actions = self.state.get_legal_actions(uhand)
         valid_children = [c for c in self.children if c.parent_action in legal_actions]
         if len(valid_children) == 0:
+            if expand_if_necessary:
+                action = legal_actions[0]
+                next_state = self.state.move(action)
+                sample = initial_sample(possible_matrix_df=next_state.possible_cards, player_totals=next_state.num_unknown)
+                unknown_hands = card_series_to_list(sample, self.state.players)
+                child_node = CooperativeGameNode(
+                    next_state, unknown_hands=unknown_hands, parent=self, parent_action=action
+                )
+                self.children.append(child_node)
+                return child_node
             raise ValueError('This node is a leaf!')
         best_child = max(valid_children, key=lambda x: x.score(c_param=c_param, parent_hand=uhand))
         return best_child
@@ -161,9 +183,9 @@ class CooperativeGameNode():
     def select(self):
         if not self.is_fully_expanded():
             raise ValueError('Only select a node when it is already fully expanded')
-        node = self.best_child(hand=self.unknown_hands[self.state.turn], c_param=0.5)
+        node = self.best_child(hand=self.unknown_hands[self.state.turn], c_param=1.4)
         new_hands = [node.state.unknown_hand(h) for h in self.unknown_hands]
-        node.unkown_hands = new_hands
+        node.unknown_hands = new_hands
         return node
 
     #
@@ -261,6 +283,15 @@ class CooperativeGameNode():
         next_move = np.random.randint(len(possible_moves))
         # print(next_move)
         return possible_moves[next_move%len(possible_moves)]
+
+    def relative_frequency(self):
+        cards = self.state.possible_cards.index
+        players = self.state.possible_cards.columns
+        onlies = self.n.loc[['only_{}'.format(c) for c in cards], players]
+        multis = self.n.loc[['has_{}'.format(c) for c in cards], players]
+        rf = pd.DataFrame(index=cards, columns=players, data=onlies.values + multis.values)
+        result = self.state.possible_cards
+        return result
 
 if __name__ == '__main__':
 
