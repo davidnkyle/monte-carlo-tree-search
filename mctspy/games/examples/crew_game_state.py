@@ -36,7 +36,7 @@ class CrewStatePublic():
         self.known_hands = [[] for _ in range(self.players)]
         self.captain = captain
         self.possible_cards = pd.DataFrame(index=DECK, columns=range(self.players), data=1)
-        if self.captain:
+        if self.captain is not None:
             self.player_has(self.captain, DECK[-1])
         self.leading = captain
         self.turn = captain
@@ -134,7 +134,7 @@ class CrewStatePublic():
             new.turn = (new.turn + 1) % self.players
             if len(new.goal_cards) == 0:
                 new.select_goals_phase = False
-                # new.communication_phase = True
+                new.communication_phase = True
                 new.turn = new.captain
             return new
         if new.communication_phase:
@@ -236,7 +236,7 @@ class CrewStatePublic():
         if self.select_goals_phase:
             return self.goal_cards
         if self.communication_phase:
-            allowable = [None]
+            allowable = []
             if self.coms[self.turn] is None:
                 sort_hand = copy(full_hand)
                 sort_hand.sort()

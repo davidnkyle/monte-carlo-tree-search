@@ -107,12 +107,11 @@ class CooperativeGameNode():
             elif len(subset) == 1:
                 features.append('only_{}'.format(subset[0]))
             else:
-                features.append('highest_{}'.format(subset[-1]))
-                features.append('lowest_{}'.format(subset[0]))
-                max_card = 4
-                if suit == 'z':
-                    max_card = 2
-                for c in ['{}{}'.format(suit, n) for n in range(1, max_card + 1)]:
+                highest = subset.pop(-1)
+                features.append('highest_{}'.format(highest))
+                lowest = subset.pop(0)
+                features.append('lowest_{}'.format(lowest))
+                for c in DECK[DECK.index(lowest) + 1: DECK.index(highest)]:
                     if c in subset:
                         features.append('has_{}'.format(c))
                     else:
@@ -126,6 +125,29 @@ class CooperativeGameNode():
                 raise KeyError('every hand must have at least one weighted feature')
             return weighted
         return pd.Series(data=1, index=features)
+
+    def score_bayesian(self, parent_hand, c_param, r=1):
+        unknown_hand = self.state.unknown_hand(parent_hand)
+        weights = self.features_from_hand(unknown_hand, weights=True)
+        base_rate = self._number_of_wins_total/self._number_of_visits_total
+        n = self.n.loc[weights.index, self.parent.state.turn] + r
+        q = self.q.loc[weights.index, self.parent.state.turn] + r*base_rate
+        n_rate = n/n.sum()
+        q_sum = q.sum()
+        q_rate = q
+        if q_sum != 0:
+            q_rate = q/q_sum
+        raw_score = base_rate*n_rate.product()*q_rate.product()
+        exploration = 0
+        if c_param != 0:
+            min_n = self.n.loc[weights.index, self.parent.state.turn].min()
+            if min_n == 0:
+                exploration = np.inf
+            else:
+                exploration = c_param*np.log(self.parent._number_of_visits_total) / min_n
+        return raw_score + exploration
+
+
 
     def score(self, parent_hand, c_param):
         """ weighted score
@@ -177,13 +199,13 @@ class CooperativeGameNode():
                 self.children.append(child_node)
                 return child_node
             raise ValueError('This node is a leaf!')
-        best_child = max(valid_children, key=lambda x: x.score(c_param=c_param, parent_hand=uhand))
+        best_child = max(valid_children, key=lambda x: x.score_bayesian(c_param=c_param, parent_hand=uhand))
         return best_child
 
-    def select(self):
+    def select(self, c_param):
         if not self.is_fully_expanded():
             raise ValueError('Only select a node when it is already fully expanded')
-        node = self.best_child(hand=self.unknown_hands[self.state.turn], c_param=1.4)
+        node = self.best_child(hand=self.unknown_hands[self.state.turn], c_param=c_param)
         new_hands = [node.state.unknown_hand(h) for h in self.unknown_hands]
         node.unknown_hands = new_hands
         return node
@@ -284,13 +306,15 @@ class CooperativeGameNode():
         # print(next_move)
         return possible_moves[next_move%len(possible_moves)]
 
-    def relative_frequency(self):
+    def relative_frequency(self, p=1):
         cards = self.state.possible_cards.index
         players = self.state.possible_cards.columns
+        highs = self.n.loc[['highest_{}'.format(c) for c in cards], players]
+        lows = self.n.loc[['lowest_{}'.format(c) for c in cards], players]
         onlies = self.n.loc[['only_{}'.format(c) for c in cards], players]
         multis = self.n.loc[['has_{}'.format(c) for c in cards], players]
-        rf = pd.DataFrame(index=cards, columns=players, data=onlies.values + multis.values)
-        result = self.state.possible_cards
+        rf = pd.DataFrame(index=cards, columns=players, data=onlies.values + multis.values + highs.values + lows.values)
+        result = self.state.possible_cards*p + rf
         return result
 
 if __name__ == '__main__':
@@ -306,7 +330,7 @@ if __name__ == '__main__':
     result = node.rollout()
     node.backpropagate(result)
     bc = root.best_child(uhands[1])
-    score = root.children[0].score(uhands[1])
+    score = root.children[0].score_bayesian(uhands[1])
     uhands1 = [['b1', 'g2', 'p1', 'z1'], ['g1', 'g4',  'g3', 'p4'], ['b2', 'b3', 'b4', 'p2', 'p3']]
     root.unknown_hands = uhands1
     node1 = root.expand()
