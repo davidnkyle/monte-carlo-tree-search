@@ -126,7 +126,7 @@ class CooperativeGameNode():
             return weighted
         return pd.Series(data=1, index=features)
 
-    def score_bayesian(self, parent_hand, c_param, r=1):
+    def score_bayesian(self, parent_hand, c_param, r=10):
         unknown_hand = self.state.unknown_hand(parent_hand)
         weights = self.features_from_hand(unknown_hand, weights=True)
         base_rate = self._number_of_wins_total/self._number_of_visits_total
@@ -306,7 +306,7 @@ class CooperativeGameNode():
         # print(next_move)
         return possible_moves[next_move%len(possible_moves)]
 
-    def relative_frequency(self, p=1):
+    def relative_frequency(self, p=10):
         cards = self.state.possible_cards.index
         players = self.state.possible_cards.columns
         highs = self.n.loc[['highest_{}'.format(c) for c in cards], players]
