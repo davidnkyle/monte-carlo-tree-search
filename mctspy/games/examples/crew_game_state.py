@@ -48,6 +48,7 @@ class CrewStatePublic():
             goal_cards = []
         self.goal_cards = goal_cards
         self.goals = [[] for _ in range(self.players)]
+        self.total_rounds = DECK_SIZE//self.players
         self.rounds_left = DECK_SIZE//self.players
         self.trick = []
 
@@ -87,6 +88,10 @@ class CrewStatePublic():
         return [c for c in hand if c not in kc]
 
     @property
+    def goals_remaining(self):
+        return sum([len(goal) for goal in self.goals])
+
+    @property
     def game_result(self):
         if not self.select_goals_phase:
             for pl in self.goals:
@@ -98,6 +103,26 @@ class CrewStatePublic():
             if self.rounds_left == 0:
                 return 0
         return None
+
+    # def game_reward(self, l=0.1):
+    #     if not self.select_goals_phase:
+    #         lose = False
+    #         goals_left = 0
+    #         for pl in self.goals:
+    #             for c in pl:
+    #                 if c in self.discard:
+    #                     lose = True # if the goal is still active and in the discard pile, there is no way to win
+    #                 goals_left += 1
+    #         goal_completion = 1 - goals_left/self.num_goals
+    #         game_completion = 1 - self.rounds_left/self.total_rounds
+    #         pity_prize = l*goal_completion*game_completion
+    #         if lose:
+    #             return pity_prize
+    #         if goals_left == 0:
+    #             return 1
+    #         if self.rounds_left == 0:
+    #             return pity_prize
+    #     return None
 
     def is_game_over(self):
         return self.game_result is not None
@@ -234,7 +259,7 @@ class CrewStatePublic():
     def get_legal_actions(self, unknown_hand):
         full_hand = self.full_hand(unknown_hand)
         if self.select_goals_phase:
-            return self.goal_cards
+            return copy(self.goal_cards)
         if self.communication_phase:
             allowable = []
             if self.coms[self.turn] is None:

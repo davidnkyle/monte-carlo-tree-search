@@ -126,7 +126,7 @@ def run_game(seed, c_param=1.4):
     root = CooperativeGameNode(initial_board_state, unknown_hands=first_seed, root=True, feature_weights=weights)
     while board_state.game_result is None:
         mcts = MCTSCrew(root)
-        simulations = 5000
+        simulations = 1000
         mcts.create_tree(card_matrix=cm, simulations_number=simulations, c_param=c_param)
         best_node = mcts.best_action(unknown_hands[board_state.turn])
         unknown_hands = [board_state.unknown_hand(h) for h in unknown_hands]

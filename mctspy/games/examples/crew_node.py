@@ -139,10 +139,15 @@ class CooperativeGameNode():
             q_rate = q/q_sum
         raw_score = base_rate*n_rate.product()*q_rate.product()
         exploration = 0
-        if c_param != 0:
+        gr = self.state.game_result
+        if gr == 0:
+            raw_score = 0
+        elif c_param != 0:
             min_n = self.n.loc[weights.index, self.parent.state.turn].min()
-            if min_n == 0:
+            if gr == 1:
                 exploration = np.inf
+            elif min_n == 0:
+                exploration = 1000000
             else:
                 exploration = c_param*np.log(self.parent._number_of_visits_total) / min_n
         return raw_score + exploration
@@ -263,18 +268,17 @@ class CooperativeGameNode():
         while not current_rollout_state.is_game_over():
             # game_states.append(current_rollout_state)
             # unknown_hand_states.append(unknown_hands)
-            turn = current_rollout_state.turn
             hand = unknown_hands[current_rollout_state.turn]
             possible_moves = current_rollout_state.get_legal_actions(hand)
-            action = self.rollout_policy(possible_moves)
-            # select_phase = current_rollout_state.select_goals_phase
-            # com_phase = current_rollout_state.communication_phase
-            for idx in range(current_rollout_state.players):
-                if len(unknown_hands[idx]) != current_rollout_state.num_unknown[idx]:
-                    raise ValueError('uh oh')
-            current_rollout_state = current_rollout_state.move(action)
+            game_result = 0
+            while (len(possible_moves) > 0) and (game_result == 0):
+                action = possible_moves.pop(np.random.randint(len(possible_moves)))
+                new_state = current_rollout_state.move(action)
+                game_result = new_state.game_result
+                if game_result == 1:
+                    break
+            current_rollout_state = new_state
             unknown_hands = [current_rollout_state.unknown_hand(h) for h in unknown_hands]
-
         return current_rollout_state.game_result
 
     def feature_df(self):
