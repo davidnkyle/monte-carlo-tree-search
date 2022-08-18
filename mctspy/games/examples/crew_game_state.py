@@ -4,11 +4,11 @@ import numpy as np
 import pandas as pd
 from copy import copy, deepcopy
 
-non_trump = 'bgp'
+non_trump = 'bgpy'
 trump = 'z'
 SUITS = non_trump + trump
-DECK = ['{}{}'.format(color, number) for color in non_trump for number in range(1, 5)] + \
-    ['{}{}'.format(trump, number) for number in range(1, 3)]
+DECK = ['{}{}'.format(color, number) for color in non_trump for number in range(1, 10)] + \
+    ['{}{}'.format(trump, number) for number in range(1, 5)]
 COMMS = ['{}{}{}'.format(color, number, modifier) for color in non_trump for number in range(1, 10) for modifier in 'hol']
 # weights = [1, 1, 1, 1, 1, 1, 2, 3, 5]
 # deck_weights = weights*4 + [5, 5, 7, 10]
