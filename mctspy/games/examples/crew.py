@@ -58,12 +58,12 @@ class MCTSCrew():
             starting_deck = card_list_to_series(sample_seed)
             sample = deepcopy(starting_deck)
             for _ in range(0, simulations_number):
-                sample = swap(starting_deck=sample, rf=card_matrix, N=120)
+                sample = swap(starting_deck=sample, rf=card_matrix, N=60)
                 unknown_hands = card_series_to_list(sample, self.root.state.players)
                 self.root.unknown_hands = unknown_hands
                 # self.hands = [list(DECK_ARRAY[np.where(sample[pl, :])]) for pl in range(self.card_matrix.shape[0])]
                 v = self._tree_policy(c_param=c_param)
-                reward = v.rollout()
+                reward = v.rollout(iterations=10)
                 # n_matrix = np.array([v.state.get_feature_vector(hand) for hand in self.hands])
                 # n_matrix = np.zeros((v.state.players, DECK_SIZE))
                 # for pl in range(v.state.players):
@@ -87,7 +87,7 @@ class MCTSCrew():
         return current_node
 
 
-def run_game(seed, c_param=100):
+def run_game(seed, c_param=1.4):
     np.random.seed(seed)
     players = 3
     deck = copy(DECK)

@@ -260,26 +260,33 @@ class CooperativeGameNode():
     def is_terminal_node(self):
         return self.state.is_game_over()
 
-    def rollout(self):
-        current_rollout_state = self.state
-        unknown_hands = deepcopy(self.unknown_hands)
-        # game_states = []
-        # unknown_hand_states = []
-        while not current_rollout_state.is_game_over():
-            # game_states.append(current_rollout_state)
-            # unknown_hand_states.append(unknown_hands)
-            hand = unknown_hands[current_rollout_state.turn]
-            possible_moves = current_rollout_state.get_legal_actions(hand)
-            game_result = 0
-            while (len(possible_moves) > 0) and (game_result == 0):
-                action = possible_moves.pop(np.random.randint(len(possible_moves)))
-                new_state = current_rollout_state.move(action)
-                game_result = new_state.game_result
-                if game_result == 1:
-                    break
-            current_rollout_state = new_state
-            unknown_hands = [current_rollout_state.unknown_hand(h) for h in unknown_hands]
-        return current_rollout_state.game_result
+    def rollout(self, iterations: int = 1):
+        max_result = 0
+        for _ in range(iterations):
+            current_rollout_state = self.state
+            unknown_hands = deepcopy(self.unknown_hands)
+            # game_states = []
+            # unknown_hand_states = []
+            while not current_rollout_state.is_game_over():
+                # game_states.append(current_rollout_state)
+                # unknown_hand_states.append(unknown_hands)
+                hand = unknown_hands[current_rollout_state.turn]
+                possible_moves = current_rollout_state.get_legal_actions(hand)
+                game_result = 0
+                while (len(possible_moves) > 0) and (game_result == 0):
+                    action = possible_moves.pop(np.random.randint(len(possible_moves)))
+                    new_state = current_rollout_state.move(action)
+                    game_result = new_state.game_result
+                    if game_result == 1:
+                        break
+                current_rollout_state = new_state
+                unknown_hands = [current_rollout_state.unknown_hand(h) for h in unknown_hands]
+            gr = current_rollout_state.game_result
+            if gr > max_result:
+                max_result = gr
+            if max_result == 1:
+                break
+        return max_result
 
     def feature_df(self):
         all_features = pd.DataFrame(index=FEATURES)

@@ -94,13 +94,16 @@ class CrewStatePublic():
     @property
     def game_result(self):
         if not self.select_goals_phase:
+            players_with_goals_left = 0
             for pl in self.goals:
-                for c in pl:
-                    if c in self.discard:
-                        return 0 # if the goal is still active and in the discard pile, there is no way to win
-            if all([len(g) == 0 for g in self.goals]):
+                if len(pl) > 0:
+                    players_with_goals_left += 1
+                    for c in pl:
+                        if c in self.discard:
+                            return 0 # if the goal is still active and in the discard pile, there is no way to win
+            if players_with_goals_left == 0:
                 return 1
-            if self.rounds_left == 0:
+            if players_with_goals_left > self.rounds_left:
                 return 0
         return None
 
@@ -159,7 +162,7 @@ class CrewStatePublic():
             new.turn = (new.turn + 1) % self.players
             if len(new.goal_cards) == 0:
                 new.select_goals_phase = False
-                new.communication_phase = True
+                # new.communication_phase = True
                 new.turn = new.captain
             return new
         if new.communication_phase:
@@ -314,9 +317,9 @@ if __name__ == '__main__':
     game = game.move('p1')
     game = game.move('b4')
     game = game.move('g3')
-    game = game.move('p2h')
-    game = game.move('b4o')
-    game = game.move('g3h')
+    # game = game.move('p2h')
+    # game = game.move('b4o')
+    # game = game.move('g3h')
     game = game.move('z2')
     game = game.move('p1')
     game = game.move('z1')
