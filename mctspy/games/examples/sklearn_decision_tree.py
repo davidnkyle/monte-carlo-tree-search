@@ -4,10 +4,12 @@ from sklearn.tree import DecisionTreeClassifier
 import numpy as np
 
 
-df = pd.read_csv('pl3_round13_1000000_20220821.csv', index_col='Unnamed: 0')
+df1 = pd.read_csv('pl3_round12_1000000_20220821.csv', index_col='Unnamed: 0')
+df2 = pd.read_csv('pl3_round12_2000000_20220822.csv', index_col='Unnamed: 0')
+df = pd.concat([df1, df2])
 
 
-split = int(len(df.index)//2)
+split = int((len(df.index)*2)//3)
 df_training = df.iloc[0:split]
 df_validation = df.iloc[split:]
 
@@ -27,4 +29,8 @@ print(y_validate.mean())
 print(y_pred.mean())
 print('false positives {}'.format(1 - y_pred[np.where(y_validate==1)].mean()))
 print('false negatives {}'.format(y_pred[np.where(y_validate==0)].mean()))
+
+import pickle
+with open('model_3pl_round12.pkl','wb') as f:
+    pickle.dump(model,f)
 

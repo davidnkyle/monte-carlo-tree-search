@@ -1,4 +1,11 @@
+import time
+from copy import copy, deepcopy
+
+
+import pickle
+
 import itertools
+from multiprocessing import Pool
 
 import numpy as np
 import pandas as pd
@@ -10,9 +17,6 @@ SUITS = non_trump + trump
 DECK = ['{}{}'.format(color, number) for color in non_trump for number in range(1, 10)] + \
     ['{}{}'.format(trump, number) for number in range(1, 5)]
 COMMS = ['{}{}{}'.format(color, number, modifier) for color in non_trump for number in range(1, 10) for modifier in 'hol']
-# weights = [1, 1, 1, 1, 1, 1, 2, 3, 5]
-# deck_weights = weights*4 + [5, 5, 7, 10]
-# DECK_WEIGHTS = np.array(deck_weights + deck_weights + [5, 5, 5, 5, 5])
 DECK_ARRAY = np.array(DECK)
 DECK_SIZE = len(DECK)
 
@@ -69,14 +73,6 @@ class CrewStatePublic():
         self.rounds_left = DECK_SIZE//self.players
         self.trick = []
 
-        # self.possible_cards = np.ones((self.players, DECK_SIZE))
-        # self.possible_cards[:, DECK.index('z4')] = 0
-        # self.possible_cards[self.captain, DECK.index('z4')] = 1
-        # self.weights = copy(DECK_WEIGHTS)
-        # for goal in self.goal_cards:
-        #     self.weights[DECK.index(goal)] += 10
-
-
     def player_has(self, player, card, flesh_out=True):
         if card not in self.known_hands[player]:
             self.known_hands[player].append(card)
@@ -86,14 +82,6 @@ class CrewStatePublic():
             self.possible_cards.drop(card, inplace=True)
         if flesh_out:
             self.flesh_out_possibilities()
-
-    # def _deal_goals(self):
-    #     cards = random.sample(DECK, self.num_goals)
-    #     self.goals = [[] for _ in range(self.players)]
-    #     i = self.captain
-    #     for c in cards:
-    #         self.goals[i].append(c)
-    #         i = (i+1)%self.players
 
     @property
     def known_cards(self):
@@ -123,26 +111,6 @@ class CrewStatePublic():
             if players_with_goals_left > self.rounds_left:
                 return 0
         return None
-
-    # def game_reward(self, l=0.1):
-    #     if not self.select_goals_phase:
-    #         lose = False
-    #         goals_left = 0
-    #         for pl in self.goals:
-    #             for c in pl:
-    #                 if c in self.discard:
-    #                     lose = True # if the goal is still active and in the discard pile, there is no way to win
-    #                 goals_left += 1
-    #         goal_completion = 1 - goals_left/self.num_goals
-    #         game_completion = 1 - self.rounds_left/self.total_rounds
-    #         pity_prize = l*goal_completion*game_completion
-    #         if lose:
-    #             return pity_prize
-    #         if goals_left == 0:
-    #             return 1
-    #         if self.rounds_left == 0:
-    #             return pity_prize
-    #     return None
 
     def is_game_over(self):
         return self.game_result is not None
@@ -321,50 +289,126 @@ class CrewStatePublic():
         new.goals = [[map[c] for c in self.goals[(idx + self.leading) % new.players]] for idx in range(new.players)]
         return new
 
-    #
-    # def get_feature_idx(self, hand):
-    #     idxs = []
-    #     for i in range(DECK_SIZE):
-    #         if DECK[i] in hand:
-    #             idxs.append(i)
-    #         else:
-    #             idxs.append(i + DECK_SIZE)
-    #     str_hand = ''.join(hand)
-    #     for j in range(len(SUITS)):
-    #         if SUITS[j] not in str_hand:
-    #             idxs.append(j + 2*DECK_SIZE)
-    #     return idxs
-    #
-    # def get_feature_vector(self, hand):
-    #     v = np.zeros(DECK_SIZE*2 + 5)
-    #     v[self.get_feature_idx(hand)] = 1
-    #     return v
 
-    # def flesh_out(self):
-    #     if np.less(self.possible_cards.sum(axis=1), self.num_cards_per_player).any():
-    #         raise ValueError('Impossible matrix')
-    #     if np.less(self.possible_cards.sum(axis=0), 1).any():
-    #         raise ValueError('Impossible matrix')
-    #
+def hand_to_vector(hand):
+    values = []
+    for card in DECK:
+        if card in hand:
+            values.append(1)
+        else:
+            values.append(0)
+    return values
+
+
+
+def features_from_game_state(game_state):
+    features = []
+    suit_sums = [0, 0, 0, 0, 0]
+    for pl in range(3):
+        vec = hand_to_vector(game_state.known_hands[pl])
+        features += vec
+        for i in range(5):
+            total = sum(vec[9 * i: 9 * (i + 1)])
+            suit_sums[i] += total
+            features.append(total)
+        features.append(sum(vec))
+        goal_vec = hand_to_vector(game_state.goals[pl])
+        features += goal_vec
+        features.append(sum(goal_vec))
+    features += suit_sums
+    features.append(num_goals)
+    return features
+
+
+def check_for_viability(turns, game_state, model):
+    if turns == 1:
+        for action in game_state.get_legal_actions([]):
+            state = game_state.move(action)
+            gr = state.game_result
+            if gr is None:
+                new = state.to_feature_form()
+                if model.predict(np.array([features_from_game_state(new)]))[0] == 1:
+                    return 1
+            elif gr == 1:
+                return 1
+        return 0
+    for action in game_state.get_legal_actions([]):
+        state = game_state.move(action)
+        if check_for_viability(turns-1, state, model) == 1:
+            return 1
+    return 0
+
+
+def generate_crew_games(seed):
+
+    np.random.seed(seed)
+    deck = copy(DECK)
+    goal_deck = copy(DECK[0:-4])
+    inputs = []
+    results = []
+
+    for _ in range(100):
+        players = 3
+        np.random.shuffle(deck)
+
+        # captain = [DECK[-1] in hand for hand in initial_hands].index(True)
+        num_goals = 1
+        initial_board_state = CrewStatePublic(players=players, num_goals=num_goals, goal_cards=[],
+                                              captain=0)
+
+        initial_board_state.leading = 0
+        initial_board_state.num_unknown = [0, 0, 0]
+        initial_board_state.rounds_left = 2
+        initial_board_state.select_goals_phase = False
+        all_cards_raw = deck[0:7]
+        map = map_known_cards(all_cards_raw)
+        all_cards = [map[c] for c in all_cards_raw]
+        non_trump_cards = [c for c in all_cards if 'z' not in c]
+        if len(non_trump_cards) == 0:
+            continue
+        num_goals = np.random.randint(len(non_trump_cards))+1
+        goals = non_trump_cards[:num_goals]
+        players_with_goals = np.random.choice(range(3), 2)
+        for goal in goals:
+            coin_flip = np.random.randint(2)
+            initial_board_state.goals[players_with_goals[coin_flip]].append(goal)
+        np.random.shuffle(all_cards)
+        initial_hands = [all_cards[0:2], all_cards[2:4], all_cards[4:6]]
+        player_with_2_cards = np.random.randint(3)
+        initial_hands[player_with_2_cards].append(all_cards[-1])
+        initial_board_state.known_hands = initial_hands
+        initial_board_state.possible_cards = pd.DataFrame()
+        features = features_from_game_state(initial_board_state)
+        inputs.append(features)
+        result = check_for_viability(3, initial_board_state, pl3_round13_model)
+        results.append(result)
+    return results
 
 if __name__ == '__main__':
-    game = CrewStatePublic(players=3, goal_cards=['g3', 'p1', 'b4'], captain=1)
-    game = game.move('p1')
-    game = game.move('b4')
-    game = game.move('g3')
-    # game = game.move('p2h')
-    # game = game.move('b4o')
-    # game = game.move('g3h')
-    game = game.move('z2')
-    game = game.move('p1')
-    game = game.move('z1')
-    game = game.move('b2')
-    game = game.move('b4')
-    game = game.move('b1')
-    game = game.move('p3')
-    game = game.move('g1')
-    game = game.move('p2')
-    game = game.move('g2')
-    game = game.move('g3')
-    game = game.move('g4')
-    print(game.game_result)
+    startTime = time.time()
+
+    feature_cols = ['leading_{}'.format(c) for c in DECK] + ['leading_{}_total'.format(s) for s in SUITS] + ['leading_total_cards'] + \
+                   ['leading_goal_{}'.format(c) for c in DECK] + ['leading_total_goals'] + \
+                   ['pl1_{}'.format(c) for c in DECK] + ['leading_{}_total'.format(s) for s in SUITS] + ['pl1_total_cards'] + \
+                   ['pl1_goal_{}'.format(c) for c in DECK] + ['pl1_total_goals'] + \
+                   ['pl2_{}'.format(c) for c in DECK] + ['leading_{}_total'.format(s) for s in SUITS] + ['pl2_total_cards'] + \
+                   ['pl2_goal_{}'.format(c) for c in DECK] + ['pl2_total_goals'] + \
+                   ['{}_total'.format(s) for s in SUITS] + ['total_goals']
+
+
+
+    with open(r'model_3pl_round13.pkl', 'rb') as f:
+        pl3_round13_model = pickle.load(f)
+
+    seeds = range(10, 20)
+
+    with Pool(5) as p:
+        results = p.map(generate_crew_games, seeds)
+
+    inputs = list(itertools.chain.from_iterable(results))
+
+    df = pd.DataFrame(data=inputs, columns=feature_cols)
+    df['result'] = results
+    df.to_csv('pl3_round12_2000000_20220827.csv')
+    executionTime = (time.time() - startTime) / 60 / 60
+    print('Execution time in hours: ' + str(executionTime))

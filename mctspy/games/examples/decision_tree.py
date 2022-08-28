@@ -1,9 +1,11 @@
+import time
 from copy import copy, deepcopy
 
 import pandas as pd
 
-from mctspy.games.examples.crew_game_state import DECK, DECK_SIZE, CrewStatePublic, SUITS
+from mctspy.games.examples.crew_game_state import DECK, DECK_SIZE, CrewStatePublic, SUITS, map_known_cards
 import numpy as np
+import pickle
 
 def hand_to_vector(hand):
     values = []
@@ -14,22 +16,7 @@ def hand_to_vector(hand):
             values.append(0)
     return values
 
-def map_known_cards(known_cards):
-    map = {}
-    for suit in SUITS:
-        max_value = 9
-        if suit == 'z':
-            max_value = 4
-        cards_in_suit = [c for c in known_cards if c[0] == suit]
-        length = len(cards_in_suit)
-        if length > 0:
-            cards_in_suit.sort()
-            cards_in_suit.reverse()
-            for i in range(length):
-                map[cards_in_suit[i]] = '{}{}'.format(suit, max_value - i)
-            if length > 1:
-                map[cards_in_suit[-1]] = '{}1'.format(suit)
-    return map
+
 
 def features_from_game_state(game_state):
     features = []
@@ -47,26 +34,29 @@ def features_from_game_state(game_state):
         features.append(sum(goal_vec))
     features += suit_sums
     features.append(num_goals)
+    return features
 
 
 def check_for_viability(turns, game_state, model):
     if turns == 1:
-        for action in game_state.legal_actions([]):
+        for action in game_state.get_legal_actions([]):
             state = game_state.move(action)
             gr = state.game_result
             if gr is None:
-                if model(features_from_game_state(state)) == 1:
+                new = state.to_feature_form()
+                if model.predict(np.array([features_from_game_state(new)]))[0] == 1:
                     return 1
             elif gr == 1:
                 return 1
         return 0
-    for action in game_state.legal_actions([]):
+    for action in game_state.get_legal_actions([]):
         state = game_state.move(action)
         if check_for_viability(turns-1, state, model) == 1:
             return 1
     return 0
 
 if __name__ == '__main__':
+    startTime = time.time()
 
     feature_cols = ['leading_{}'.format(c) for c in DECK] + ['leading_{}_total'.format(s) for s in SUITS] + ['leading_total_cards'] + \
                    ['leading_goal_{}'.format(c) for c in DECK] + ['leading_total_goals'] + \
@@ -75,11 +65,15 @@ if __name__ == '__main__':
                    ['pl2_{}'.format(c) for c in DECK] + ['leading_{}_total'.format(s) for s in SUITS] + ['pl2_total_cards'] + \
                    ['pl2_goal_{}'.format(c) for c in DECK] + ['pl2_total_goals'] + \
                    ['{}_total'.format(s) for s in SUITS] + ['total_goals']
+
+    with open(r'model_3pl_round13.pkl', 'rb') as f:
+        pl3_round13_model = pickle.load(f)
+
     deck = copy(DECK)
     goal_deck = copy(DECK[0:-4])
     inputs = []
     results = []
-    for seed in range(10000):
+    for seed in range(1000000, 3000000):
         np.random.seed(seed)
         players = 3
         np.random.shuffle(deck)
@@ -91,9 +85,9 @@ if __name__ == '__main__':
 
         initial_board_state.leading = 0
         initial_board_state.num_unknown = [0, 0, 0]
-        initial_board_state.rounds_left = 1
+        initial_board_state.rounds_left = 2
         initial_board_state.select_goals_phase = False
-        all_cards_raw = deck[0:4]
+        all_cards_raw = deck[0:7]
         map = map_known_cards(all_cards_raw)
         all_cards = [map[c] for c in all_cards_raw]
         non_trump_cards = [c for c in all_cards if 'z' not in c]
@@ -101,33 +95,38 @@ if __name__ == '__main__':
             continue
         num_goals = np.random.randint(len(non_trump_cards))+1
         goals = non_trump_cards[:num_goals]
-        this_player_goal = np.random.randint(3)
-        initial_board_state.goals[this_player_goal] += goals
+        players_with_goals = np.random.choice(range(3), 2)
+        for goal in goals:
+            coin_flip = np.random.randint(2)
+            initial_board_state.goals[players_with_goals[coin_flip]].append(goal)
         np.random.shuffle(all_cards)
-        initial_hands = [[all_cards[0]], [all_cards[1]], [all_cards[2]]]
+        initial_hands = [all_cards[0:2], all_cards[2:4], all_cards[4:6]]
         player_with_2_cards = np.random.randint(3)
-        initial_hands[player_with_2_cards].append(all_cards[3])
+        initial_hands[player_with_2_cards].append(all_cards[-1])
         initial_board_state.known_hands = initial_hands
         initial_board_state.possible_cards = pd.DataFrame()
         features = features_from_game_state(initial_board_state)
         inputs.append(features)
-        result = 0
-        for idx in range(2):
-            if player_with_2_cards == 0:
-                board = initial_board_state.move(initial_hands[0][idx])
-            else:
-                board = initial_board_state.move(initial_hands[0][0])
-            if player_with_2_cards == 1:
-                board = board.move(initial_hands[1][idx])
-            else:
-                board = board.move(initial_hands[1][0])
-            if player_with_2_cards == 2:
-                board = board.move(initial_hands[2][idx])
-            else:
-                board = board.move(initial_hands[2][0])
-            result = max(result, board.game_result)
+        result = check_for_viability(3, initial_board_state, pl3_round13_model)
+        # result = 0
+        # for idx in range(2):
+        #     if player_with_2_cards == 0:
+        #         board = initial_board_state.move(initial_hands[0][idx])
+        #     else:
+        #         board = initial_board_state.move(initial_hands[0][0])
+        #     if player_with_2_cards == 1:
+        #         board = board.move(initial_hands[1][idx])
+        #     else:
+        #         board = board.move(initial_hands[1][0])
+        #     if player_with_2_cards == 2:
+        #         board = board.move(initial_hands[2][idx])
+        #     else:
+        #         board = board.move(initial_hands[2][0])
+        #     result = max(result, board.game_result)
         results.append(result)
 
     df = pd.DataFrame(data=inputs, columns=feature_cols)
     df['result'] = results
-    df.to_csv('pl3_round12_10000_20220821.csv')
+    df.to_csv('pl3_round12_2000000_20220822.csv')
+    executionTime = (time.time() - startTime) / 60 / 60
+    print('Execution time in hours: ' + str(executionTime))
