@@ -6,6 +6,7 @@ from multiprocessing import Pool
 import numpy as np
 import pandas as pd
 from datetime import datetime
+import os, psutil
 
 
 non_trump = 'bgpy'
@@ -341,24 +342,27 @@ def check_for_viability(turns, game_state, model):
 
 def create_board_state(round=13, players=3):
     deck = copy(DECK)
-    np.random.shuffle(deck)
-    initial_board_state = CrewStatePublic(players=players, goal_cards=[],
-                                          captain=0)
+    some_non_trump_cards = False
+    max_tries = 100
+    while not some_non_trump_cards and max_tries > 0:
+        np.random.shuffle(deck)
+        initial_board_state = CrewStatePublic(players=players, goal_cards=[],
+                                              captain=0)
 
-    initial_board_state.leading = 0
-    initial_board_state.num_unknown = [0, 0, 0]
-    rounds_left = len(deck)//players - round + 1
-    initial_board_state.rounds_left = rounds_left
-    initial_board_state.select_goals_phase = False
-    extra_card = 0
-    if players==3:
-        extra_card = 1
-    all_cards_raw = deck[0:rounds_left*players + extra_card]
-    map = map_known_cards(all_cards_raw)
-    all_cards = [map[c] for c in all_cards_raw]
-    non_trump_cards = [c for c in all_cards if 'z' not in c]
-    if len(non_trump_cards) == 0:
-        return None
+        initial_board_state.leading = 0
+        initial_board_state.num_unknown = [0, 0, 0]
+        rounds_left = len(deck)//players - round + 1
+        initial_board_state.rounds_left = rounds_left
+        initial_board_state.select_goals_phase = False
+        extra_card = 0
+        if players==3:
+            extra_card = 1
+        all_cards_raw = deck[0:rounds_left*players + extra_card]
+        map = map_known_cards(all_cards_raw)
+        all_cards = [map[c] for c in all_cards_raw]
+        non_trump_cards = [c for c in all_cards if 'z' not in c]
+        some_non_trump_cards = (len(non_trump_cards) > 0)
+        max_tries -= 1
     num_goals = np.random.randint(min(len(non_trump_cards), 10)) + 1
     goals = non_trump_cards[:num_goals]
     max_num_players_with_goals = min(rounds_left, 3)
@@ -378,50 +382,50 @@ def create_board_state(round=13, players=3):
 
 def generate_crew_games(seed, model):
 
+    np.random.seed(seed)
+    # inputs = []
+    # results = []
+
+    initial_board_state = create_board_state(13, 3)
+
+    features = features_from_game_state(initial_board_state)
+    # inputs.append(features)
+    result = check_for_viability(3, initial_board_state, model)
+    # results.append(result)
+
+    return features + [result]
+
+    # df = pd.DataFrame(data=inputs, columns=feature_cols)
+    # df['result'] = results
+    # return df
+
+if __name__ == '__main__':
+    startTime = time.time()
+
     feature_cols = ['leading_{}'.format(c) for c in DECK] + ['leading_{}_total'.format(s) for s in SUITS] + ['leading_total_cards'] + \
                    ['leading_goal_{}'.format(c) for c in DECK] + ['leading_total_goals'] + \
                    ['pl1_{}'.format(c) for c in DECK] + ['leading_{}_total'.format(s) for s in SUITS] + ['pl1_total_cards'] + \
                    ['pl1_goal_{}'.format(c) for c in DECK] + ['pl1_total_goals'] + \
                    ['pl2_{}'.format(c) for c in DECK] + ['leading_{}_total'.format(s) for s in SUITS] + ['pl2_total_cards'] + \
                    ['pl2_goal_{}'.format(c) for c in DECK] + ['pl2_total_goals'] + \
-                   ['{}_total'.format(s) for s in SUITS] + ['total_goals']
-
-    np.random.seed(seed)
-    inputs = []
-    results = []
-
-    for _ in range(100):
-        initial_board_state = create_board_state(13, 3)
-        if initial_board_state is None:
-            continue
-
-        features = features_from_game_state(initial_board_state)
-        inputs.append(features)
-        result = check_for_viability(3, initial_board_state, model)
-        results.append(result)
-
-    df = pd.DataFrame(data=inputs, columns=feature_cols)
-    df['result'] = results
-    return df
-
-if __name__ == '__main__':
-    startTime = time.time()
+                   ['{}_total'.format(s) for s in SUITS] + ['total_goals', 'result']
 
     players = 3
     round = 13
-    seeds = range(10, 20)
+    seeds = range(1000)
 
     # with open(r'model_{}pl_round{}.pkl'.format(players, round+1), 'rb') as f:
     #     model = pickle.load(f)
     model = None
 
-    with Pool(5) as p:
-        dfs = p.starmap(generate_crew_games, zip(seeds, [model for _ in range(len(seeds))]))
+    with Pool(4) as p:
+        rows = p.starmap(generate_crew_games, zip(seeds, [model for _ in range(len(seeds))]))
 
-    df = pd.concat(dfs)
+    df = pd.DataFrame(data=rows, columns=feature_cols)
 
-    # df = generate_crew_games(100, model)
-
-    df.to_csv('pl{}_round{}_{}_{}.csv'.format(players, round, len(df.index), datetime.today().strftime('%Y%m%d')))
+    export_file = 'pl{}_round{}_{}_{}_{}.csv'.format(players, round, seeds[0], seeds[-1], datetime.today().strftime('%Y%m%d'))
+    print(export_file)
+    df.to_csv(export_file)
     executionTime = (time.time() - startTime) / 60
     print('Execution time in minutes: ' + str(executionTime))
+    print('{} MB'.format(psutil.Process(os.getpid()).memory_info().rss / 1024 ** 2))
