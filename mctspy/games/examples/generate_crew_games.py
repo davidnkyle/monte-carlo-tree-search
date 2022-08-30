@@ -7,7 +7,12 @@ import numpy as np
 import pandas as pd
 from datetime import datetime
 import os, psutil
+import sys
 
+# first argument is number of players
+# second argument is which round this is modelling
+# third argument seed range start
+# fourth argument seed range end
 
 non_trump = 'bgpy'
 trump = 'z'
@@ -380,13 +385,13 @@ def create_board_state(round=13, players=3):
     return initial_board_state
 
 
-def generate_crew_games(seed, model):
+def generate_crew_games(seed, model, players, round):
 
     np.random.seed(seed)
     # inputs = []
     # results = []
 
-    initial_board_state = create_board_state(13, 3)
+    initial_board_state = create_board_state(round, players)
 
     features = features_from_game_state(initial_board_state)
     # inputs.append(features)
@@ -410,22 +415,41 @@ if __name__ == '__main__':
                    ['pl2_goal_{}'.format(c) for c in DECK] + ['pl2_total_goals'] + \
                    ['{}_total'.format(s) for s in SUITS] + ['total_goals', 'result']
 
-    players = 3
-    round = 13
-    seeds = range(1000)
+    players = int(sys.argv[1])
+    round = int(sys.argv[2])
+    seed_start = int(sys.argv[3])
+    seed_end = int(sys.argv[4])
+    max_rows_per_export = 10000
 
-    # with open(r'model_{}pl_round{}.pkl'.format(players, round+1), 'rb') as f:
-    #     model = pickle.load(f)
-    model = None
+    if round == len(DECK)//players:
+        model = None
+    else:
+        with open(r'model_{}pl_round{}.pkl'.format(players, round+1), 'rb') as f:
+            model = pickle.load(f)
 
-    with Pool(4) as p:
-        rows = p.starmap(generate_crew_games, zip(seeds, [model for _ in range(len(seeds))]))
+    os.makedirs('results', exist_ok=True)
 
-    df = pd.DataFrame(data=rows, columns=feature_cols)
+    for idx in range(int(np.ceil((seed_end-seed_start)/max_rows_per_export))):
+        seeds = range(idx*max_rows_per_export, min(seed_end, (idx+1)*max_rows_per_export))
 
-    export_file = 'pl{}_round{}_{}_{}_{}.csv'.format(players, round, seeds[0], seeds[-1], datetime.today().strftime('%Y%m%d'))
-    print(export_file)
-    df.to_csv(export_file)
+        # with Pool(4) as p:
+        #     models = [model for _ in range(len(seeds))]
+        #     player_list = [players for _ in range(len(seeds))]
+        #     round_list = [round for _ in range(len(seeds))]
+        #     rows = p.starmap(generate_crew_games, zip(seeds, models, player_list, round_list))
+        rows = []
+        for seed in seeds:
+            rows.append(generate_crew_games(seed, model, players, round))
+
+        df = pd.DataFrame(data=rows, columns=feature_cols)
+
+        export_file = 'results/pl{}_round{}_{}_{}_{}.csv'.format(players, round, seeds[0], seeds[-1], datetime.today().strftime('%Y%m%d'))
+        print(export_file)
+        df.to_csv(export_file)
+        print('{} MB'.format(psutil.Process(os.getpid()).memory_info().rss / 1024 ** 2))
+        del df
+        del rows
+
     executionTime = (time.time() - startTime) / 60
     print('Execution time in minutes: ' + str(executionTime))
-    print('{} MB'.format(psutil.Process(os.getpid()).memory_info().rss / 1024 ** 2))
+    print('total: {} MB'.format(psutil.Process(os.getpid()).memory_info().rss / 1024 ** 2))
