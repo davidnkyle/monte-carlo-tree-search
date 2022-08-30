@@ -1,15 +1,11 @@
 import time
 from copy import copy, deepcopy
-
-
 import pickle
-
 import itertools
 from multiprocessing import Pool
-
 import numpy as np
 import pandas as pd
-from copy import copy, deepcopy
+
 
 non_trump = 'bgpy'
 trump = 'z'
@@ -304,6 +300,7 @@ def hand_to_vector(hand):
 def features_from_game_state(game_state):
     features = []
     suit_sums = [0, 0, 0, 0, 0]
+    total_goals = 0
     for pl in range(3):
         vec = hand_to_vector(game_state.known_hands[pl])
         features += vec
@@ -314,9 +311,11 @@ def features_from_game_state(game_state):
         features.append(sum(vec))
         goal_vec = hand_to_vector(game_state.goals[pl])
         features += goal_vec
-        features.append(sum(goal_vec))
+        player_goals = sum(goal_vec)
+        features.append(player_goals)
+        total_goals += player_goals
     features += suit_sums
-    features.append(num_goals)
+    features.append(total_goals)
     return features
 
 
@@ -339,7 +338,15 @@ def check_for_viability(turns, game_state, model):
     return 0
 
 
-def generate_crew_games(seed):
+def generate_crew_games(seed, model):
+
+    feature_cols = ['leading_{}'.format(c) for c in DECK] + ['leading_{}_total'.format(s) for s in SUITS] + ['leading_total_cards'] + \
+                   ['leading_goal_{}'.format(c) for c in DECK] + ['leading_total_goals'] + \
+                   ['pl1_{}'.format(c) for c in DECK] + ['leading_{}_total'.format(s) for s in SUITS] + ['pl1_total_cards'] + \
+                   ['pl1_goal_{}'.format(c) for c in DECK] + ['pl1_total_goals'] + \
+                   ['pl2_{}'.format(c) for c in DECK] + ['leading_{}_total'.format(s) for s in SUITS] + ['pl2_total_cards'] + \
+                   ['pl2_goal_{}'.format(c) for c in DECK] + ['pl2_total_goals'] + \
+                   ['{}_total'.format(s) for s in SUITS] + ['total_goals']
 
     np.random.seed(seed)
     deck = copy(DECK)
@@ -347,7 +354,7 @@ def generate_crew_games(seed):
     inputs = []
     results = []
 
-    for _ in range(100):
+    for _ in range(10):
         players = 3
         np.random.shuffle(deck)
 
@@ -380,35 +387,29 @@ def generate_crew_games(seed):
         initial_board_state.possible_cards = pd.DataFrame()
         features = features_from_game_state(initial_board_state)
         inputs.append(features)
-        result = check_for_viability(3, initial_board_state, pl3_round13_model)
+        result = check_for_viability(3, initial_board_state, model)
         results.append(result)
-    return results
+
+    df = pd.DataFrame(data=inputs, columns=feature_cols)
+    df['result'] = results
+    return df
 
 if __name__ == '__main__':
     startTime = time.time()
 
-    feature_cols = ['leading_{}'.format(c) for c in DECK] + ['leading_{}_total'.format(s) for s in SUITS] + ['leading_total_cards'] + \
-                   ['leading_goal_{}'.format(c) for c in DECK] + ['leading_total_goals'] + \
-                   ['pl1_{}'.format(c) for c in DECK] + ['leading_{}_total'.format(s) for s in SUITS] + ['pl1_total_cards'] + \
-                   ['pl1_goal_{}'.format(c) for c in DECK] + ['pl1_total_goals'] + \
-                   ['pl2_{}'.format(c) for c in DECK] + ['leading_{}_total'.format(s) for s in SUITS] + ['pl2_total_cards'] + \
-                   ['pl2_goal_{}'.format(c) for c in DECK] + ['pl2_total_goals'] + \
-                   ['{}_total'.format(s) for s in SUITS] + ['total_goals']
 
-
+    seeds = range(10, 20)
 
     with open(r'model_3pl_round13.pkl', 'rb') as f:
         pl3_round13_model = pickle.load(f)
 
-    seeds = range(10, 20)
-
     with Pool(5) as p:
-        results = p.map(generate_crew_games, seeds)
+        dfs = p.starmap(generate_crew_games, zip(seeds, [pl3_round13_model for _ in range(len(seeds))]))
 
-    inputs = list(itertools.chain.from_iterable(results))
+    df = pd.concat(dfs)
 
-    df = pd.DataFrame(data=inputs, columns=feature_cols)
-    df['result'] = results
-    df.to_csv('pl3_round12_2000000_20220827.csv')
-    executionTime = (time.time() - startTime) / 60 / 60
-    print('Execution time in hours: ' + str(executionTime))
+    # df = generate_crew_games(100, pl3_round13_model)
+
+    df.to_csv('pl3_round12_100_20220829.csv')
+    executionTime = (time.time() - startTime) / 60
+    print('Execution time in minutes: ' + str(executionTime))
