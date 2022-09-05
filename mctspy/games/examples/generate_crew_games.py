@@ -415,11 +415,11 @@ if __name__ == '__main__':
                    ['pl2_goal_{}'.format(c) for c in DECK] + ['pl2_total_goals'] + \
                    ['{}_total'.format(s) for s in SUITS] + ['total_goals', 'result']
 
-    players = int(sys.argv[1])
-    round = int(sys.argv[2])
-    seed_start = int(sys.argv[3])
-    seed_end = int(sys.argv[4])
-    max_rows_per_export = 10000
+    players = 3 #int(sys.argv[1])
+    round = 12 #int(sys.argv[2])
+    seed_start = 0 #int(sys.argv[3])
+    seed_end = 30000000 #int(sys.argv[4])
+    max_rows_per_export = 1000000
 
     if round == len(DECK)//players:
         model = None
@@ -427,23 +427,24 @@ if __name__ == '__main__':
         with open(r'model_{}pl_round{}.pkl'.format(players, round+1), 'rb') as f:
             model = pickle.load(f)
 
-    os.makedirs('results', exist_ok=True)
+    parent_path = r'G:\Users\DavidK\analyses_not_project_specific\20220831_simulation_results\results'
+    os.makedirs(parent_path, exist_ok=True)
 
     for idx in range(int(np.ceil((seed_end-seed_start)/max_rows_per_export))):
         seeds = range(idx*max_rows_per_export, min(seed_end, (idx+1)*max_rows_per_export))
 
-        # with Pool(4) as p:
-        #     models = [model for _ in range(len(seeds))]
-        #     player_list = [players for _ in range(len(seeds))]
-        #     round_list = [round for _ in range(len(seeds))]
-        #     rows = p.starmap(generate_crew_games, zip(seeds, models, player_list, round_list))
-        rows = []
-        for seed in seeds:
-            rows.append(generate_crew_games(seed, model, players, round))
+        with Pool(60) as p:
+            models = [model for _ in range(len(seeds))]
+            player_list = [players for _ in range(len(seeds))]
+            round_list = [round for _ in range(len(seeds))]
+            rows = p.starmap(generate_crew_games, zip(seeds, models, player_list, round_list))
+        # rows = []
+        # for seed in seeds:
+        #     rows.append(generate_crew_games(seed, model, players, round))
 
         df = pd.DataFrame(data=rows, columns=feature_cols)
 
-        export_file = 'results/pl{}_round{}_{}_{}_{}.csv'.format(players, round, seeds[0], seeds[-1], datetime.today().strftime('%Y%m%d'))
+        export_file = parent_path + '/pl{}_round{}_{}_{}_{}.csv'.format(players, round, seeds[0], seeds[-1], datetime.today().strftime('%Y%m%d'))
         print(export_file)
         df.to_csv(export_file)
         print('{} MB'.format(psutil.Process(os.getpid()).memory_info().rss / 1024 ** 2))
