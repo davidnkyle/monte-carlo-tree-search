@@ -9,10 +9,9 @@ from copy import copy, deepcopy
 
 
 
-from mctspy.games.examples.crew_game_state import SUITS, DECK, CrewStatePublic
-from mctspy.games.examples.integer_programming import initial_sample
-
-
+# from mctspy.games.examples.crew_game_state import SUITS, DECK, CrewStatePublic
+# from mctspy.games.examples.integer_programming import initial_sample
+from mctspy.games.examples.generate_crew_games import CrewStatePublic, check_for_viability
 
 class CooperativeGameNodeDet():
 
@@ -88,32 +87,40 @@ class CooperativeGameNodeDet():
     def is_terminal_node(self):
         return self.state.is_game_over()
 
-    def rollout(self):
+    def rollout(self, model_dict):
         current_rollout_state = self.state
+        turns_until_next_round = (-len(current_rollout_state.trick)) % current_rollout_state.players
+        model = None
+        next_rounds_left = current_rollout_state.rounds_left - 1
+        if turns_until_next_round == 0 and current_rollout_state.rounds_left in model_dict:
+            model = model_dict[current_rollout_state.rounds_left]
+        elif next_rounds_left in model_dict:
+            model = model_dict[next_rounds_left]
+        return check_for_viability(turns_until_next_round, current_rollout_state, model)
         # game_states = []
         # unknown_hand_states = []
-        actions = []
-        game_result = current_rollout_state.game_result
-        while not current_rollout_state.is_game_over():
-            # game_states.append(current_rollout_state)
-            # unknown_hand_states.append(unknown_hands)
-            possible_moves = current_rollout_state.get_legal_actions([])
-            game_result = 0
-            while (len(possible_moves) > 0) and (game_result == 0):
-                action = possible_moves.pop(np.random.randint(len(possible_moves)))
-                new_state = current_rollout_state.move(action)
-                game_result = new_state.game_result
-                if game_result == 1:
-                    break
-            actions.append(action)
-            current_rollout_state = new_state
-        if game_result == 0 and current_rollout_state.rounds_left != 0:
-            goal_completion = 1-(current_rollout_state.goals_remaining/self.state.num_goals)
-            inv_game_completion = self.state.total_rounds/current_rollout_state.rounds_left
-            game_result = goal_completion #**inv_game_completion
-        if game_result == 1:
-            print(actions)
-        return game_result
+        # actions = []
+        # game_result = current_rollout_state.game_result
+        # while not current_rollout_state.is_game_over():
+        #     # game_states.append(current_rollout_state)
+        #     # unknown_hand_states.append(unknown_hands)
+        #     possible_moves = current_rollout_state.get_legal_actions([])
+        #     game_result = 0
+        #     while (len(possible_moves) > 0) and (game_result == 0):
+        #         action = possible_moves.pop(np.random.randint(len(possible_moves)))
+        #         new_state = current_rollout_state.move(action)
+        #         game_result = new_state.game_result
+        #         if game_result == 1:
+        #             break
+        #     actions.append(action)
+        #     current_rollout_state = new_state
+        # if game_result == 0 and current_rollout_state.rounds_left != 0:
+        #     goal_completion = 1-(current_rollout_state.goals_remaining/self.state.num_goals)
+        #     inv_game_completion = self.state.total_rounds/current_rollout_state.rounds_left
+        #     game_result = goal_completion #**inv_game_completion
+        # if game_result == 1:
+        #     print(actions)
+        # return game_result
 
     def backpropagate(self, result):
         self._number_of_visits_total += 1

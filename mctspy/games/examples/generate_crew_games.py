@@ -327,17 +327,12 @@ def features_from_game_state(game_state):
 
 
 def check_for_viability(turns, game_state, model):
-    if turns == 1:
-        for action in game_state.get_legal_actions([]):
-            state = game_state.move(action)
-            gr = state.game_result
-            if gr is None:
-                new = state.to_feature_form()
-                if model.predict(np.array([features_from_game_state(new)]))[0] == 1:
-                    return 1
-            elif gr == 1:
-                return 1
-        return 0
+    if turns == 0:
+        gr = game_state.game_result
+        if gr is None:
+            new = game_state.to_feature_form()
+            return model.predict(np.array([features_from_game_state(new)]))[0]
+        return gr
     for action in game_state.get_legal_actions([]):
         state = game_state.move(action)
         if check_for_viability(turns-1, state, model) == 1:

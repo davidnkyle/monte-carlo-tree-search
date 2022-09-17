@@ -9,7 +9,7 @@ import os
 
 startTime = time.time()
 
-folder_path = r'G:\Users\DavidK\analyses_not_project_specific\20220831_simulation_results\results/*.csv'
+folder_path = r'G:\Users\DavidK\analyses_not_project_specific\20220831_simulation_results\20220907_results/*.csv'
 all_files = glob.glob(folder_path)
 li = []
 
