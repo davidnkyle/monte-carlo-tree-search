@@ -323,6 +323,7 @@ def features_from_game_state(game_state):
         total_goals += player_goals
     features += suit_sums
     features.append(total_goals)
+    features.append(game_state.rounds_left)
     return features
 
 
@@ -332,11 +333,14 @@ def check_for_viability(turns, game_state, model):
         if gr is None:
             new = game_state.to_feature_form()
             return model.predict(np.array([features_from_game_state(new)]))[0]
+        if gr == 1:
+            gr = np.inf
         return gr
     for action in game_state.get_legal_actions([]):
         state = game_state.move(action)
-        if check_for_viability(turns-1, state, model) == 1:
-            return 1
+        r = check_for_viability(turns-1, state, model)
+        if r > 0:
+            return r
     return 0
 
 

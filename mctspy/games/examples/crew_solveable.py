@@ -1,3 +1,5 @@
+import glob
+import itertools
 import os
 import pickle
 import time
@@ -9,6 +11,7 @@ import numpy as np
 from datetime import datetime
 import pandas as pd
 import psutil
+from sklearn.tree import DecisionTreeClassifier
 
 from mctspy.games.examples.generate_crew_games import SUITS, DECK, DECK_SIZE, CrewStatePublic, create_board_state, \
     features_from_game_state
@@ -31,9 +34,9 @@ EPSILON = 0.000000000001
 
 
 class MCTSCrewSolver():
-    def __init__(self, node, model_dict):
+    def __init__(self, node, model):
         self.root = node
-        self.model_dict = model_dict
+        self.model = model
 
 
     def create_tree(self, c_param, simulations_number=None):
@@ -41,7 +44,7 @@ class MCTSCrewSolver():
         # reward = 0
         for _ in range(0, simulations_number):
             v = self._tree_policy(c_param=c_param)
-            reward = v.rollout(self.model_dict)
+            reward = v.rollout(self.model)
             v.backpropagate(reward)
         # actions = []
         # while v.parent:
@@ -64,14 +67,16 @@ class MCTSCrewSolver():
         return current_node
 
 
-def run_game(seed, round, players, model_dict, c_param=1.4):
+def run_game(seed, round, players, model, c_param=1.4):
     np.random.seed(seed)
     initial_board_state = create_board_state(round=round, players=players)
-    features = features_from_game_state(initial_board_state)
+    feature_list = []
     root = CooperativeGameNodeDet(initial_board_state, root=True)
     board_state = deepcopy(initial_board_state)
     while board_state.game_result is None:
-        mcts = MCTSCrewSolver(root, model_dict=model_dict)
+        mcts = MCTSCrewSolver(root, model=model)
+        if len(root.state.trick) == 0:
+            feature_list.append(features_from_game_state(root.state))
         simulations = 1000
         mcts.create_tree(simulations_number=simulations, c_param=c_param)
         best_node = mcts.best_action()
@@ -79,7 +84,7 @@ def run_game(seed, round, players, model_dict, c_param=1.4):
         best_node.root = True
         root = best_node
     result = board_state.game_result
-    return features + [result]
+    return [features + [result] for features in feature_list]
 
 if __name__ == '__main__':
     startTime = time.time()
@@ -93,54 +98,79 @@ if __name__ == '__main__':
                    ['pl2_{}'.format(c) for c in DECK] + ['leading_{}_total'.format(s) for s in SUITS] + [
                        'pl2_total_cards'] + \
                    ['pl2_goal_{}'.format(c) for c in DECK] + ['pl2_total_goals'] + \
-                   ['{}_total'.format(s) for s in SUITS] + ['total_goals', 'result']
+                   ['{}_total'.format(s) for s in SUITS] + ['total_goals', 'round', 'result']
 
     players = 3  # int(sys.argv[1])
-    round = 10  # int(sys.argv[2])
-    seed_start = 0  # int(sys.argv[3])
-    seed_end = 1000000  # int(sys.argv[4])
-    max_rows_per_export = 100000
+    for round in reversed(range(1, 14)):
+        seed_start = 0  # int(sys.argv[3])
+        seed_end = 1000  # int(sys.argv[4])
+        max_rows_per_export = 100000
 
-    model_dict = {}
-    for rounds_left in range((len(DECK) // players) - round):
-        with open(r'model_{}pl_rounds_left{}.pkl'.format(players, rounds_left+1), 'rb') as f:
-            model = pickle.load(f)
-        model_dict[rounds_left+1] = model
+        parent_path = r'G:\Users\DavidK\analyses_not_project_specific\20220831_simulation_results\20220918_results_take2'
 
-    # if round == len(DECK) // players:
-    #     model = None
-    # else:
-    #     with open(r'model_{}pl_round{}.pkl'.format(players, round + 1), 'rb') as f:
-    #         model = pickle.load(f)
+        model = None
+        if round < 13:
+            with open(parent_path + r'/model_{}pl_round{}.pkl'.format(players, round+1), 'rb') as f:
+                model = pickle.load(f)
 
-    parent_path = r'G:\Users\DavidK\analyses_not_project_specific\20220831_simulation_results\20220912_results'
-    os.makedirs(parent_path, exist_ok=True)
+        os.makedirs(parent_path, exist_ok=True)
 
-    for idx in range(int(np.ceil((seed_end - seed_start) / max_rows_per_export))):
-        seeds = range(idx * max_rows_per_export, min(seed_end, (idx + 1) * max_rows_per_export))
+        for idx in range(int(np.ceil((seed_end - seed_start) / max_rows_per_export))):
+            seeds = range(idx * max_rows_per_export, min(seed_end, (idx + 1) * max_rows_per_export))
 
-        with Pool(60) as p:
-            models = [model for _ in range(len(seeds))]
-            player_list = [players for _ in range(len(seeds))]
-            round_list = [round for _ in range(len(seeds))]
-            model_dict_list = [model_dict for _ in range(len(seeds))]
-            rows = p.starmap(run_game, zip(seeds, round_list, player_list, model_dict_list))
-        # rows = []
-        # for seed in seeds:
-        #     rows.append(run_game(seed, round, players, model_dict=model_dict))
+            with Pool(60) as p:
+                models = [model for _ in range(len(seeds))]
+                player_list = [players for _ in range(len(seeds))]
+                round_list = [round for _ in range(len(seeds))]
+                list_of_rows = p.starmap(run_game, zip(seeds, round_list, player_list, models))
+            rows = list(itertools.chain.from_iterable(list_of_rows))
+            # rows = []
+            # for seed in seeds:
+            #     rows += run_game(seed, round, players, model)
 
-        df = pd.DataFrame(data=rows, columns=feature_cols)
+            df = pd.DataFrame(data=rows, columns=feature_cols)
 
-        export_file = parent_path + '/pl{}_round{}_{}_{}_{}.csv'.format(players, round, seeds[0], seeds[-1],
-                                                                        datetime.today().strftime('%Y%m%d'))
-        print(export_file)
-        df.to_csv(export_file)
-        print('{} MB'.format(psutil.Process(os.getpid()).memory_info().rss / 1024 ** 2))
-        del df
-        del rows
+            export_file = parent_path + '/pl{}_round{}_{}_{}_{}.csv'.format(players, round, seeds[0], seeds[-1],
+                                                                            datetime.today().strftime('%Y%m%d'))
+            print(export_file)
+            df.to_csv(export_file)
+            print('{} MB'.format(psutil.Process(os.getpid()).memory_info().rss / 1024 ** 2))
+            del df
+            del rows
 
-    executionTime = (time.time() - startTime) / 60
-    print('Execution time in minutes: ' + str(executionTime))
-    print('total: {} MB'.format(psutil.Process(os.getpid()).memory_info().rss / 1024 ** 2))
+        all_files = glob.glob(parent_path + '/*.csv')
+        li = []
+
+        print('reading data')
+
+        for filename in all_files:
+            df = pd.read_csv(filename, index_col='Unnamed: 0')
+            li.append(df)
+            print('.', end='')
+
+        df = pd.concat(li)
+        del li
+
+        print()
+        executionTime = (time.time() - startTime) / 60
+        print('Execution time in minutes: ' + str(executionTime))
+        print('total: {} MB'.format(psutil.Process(os.getpid()).memory_info().rss / 1024 ** 2))
+
+        y_train = np.array(df['result'])
+        x_train = df.drop('result', axis=1).values
+
+        print('fitting model')
+
+        model = DecisionTreeClassifier(criterion='entropy')
+        model.fit(x_train, y_train)
+
+        print('writing results')
+
+        with open(parent_path + '/model_{}pl_round{}.pkl'.format(players, round), 'wb') as f:
+            pickle.dump(model, f)
+
+        executionTime = (time.time() - startTime) / 60
+        print('Execution time in minutes: ' + str(executionTime))
+        print('total: {} MB'.format(psutil.Process(os.getpid()).memory_info().rss / 1024 ** 2))
 
 

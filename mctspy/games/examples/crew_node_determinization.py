@@ -87,15 +87,12 @@ class CooperativeGameNodeDet():
     def is_terminal_node(self):
         return self.state.is_game_over()
 
-    def rollout(self, model_dict):
+    def rollout(self, model):
         current_rollout_state = self.state
-        turns_until_next_round = (-len(current_rollout_state.trick)) % current_rollout_state.players
-        model = None
-        next_rounds_left = current_rollout_state.rounds_left - 1
-        if turns_until_next_round == 0 and current_rollout_state.rounds_left in model_dict:
-            model = model_dict[current_rollout_state.rounds_left]
-        elif next_rounds_left in model_dict:
-            model = model_dict[next_rounds_left]
+        if current_rollout_state.select_goals_phase:
+            turns_until_next_round = len(current_rollout_state.goal_cards)
+        else:
+            turns_until_next_round = (-len(current_rollout_state.trick)) % current_rollout_state.players
         return check_for_viability(turns_until_next_round, current_rollout_state, model)
         # game_states = []
         # unknown_hand_states = []
