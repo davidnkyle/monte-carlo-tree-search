@@ -87,7 +87,7 @@ class MCTSCrew():
         return current_node
 
 
-def run_game(seed, c_param=0.5):
+def run_game(seed, c_param=1.4):
     np.random.seed(seed)
     players = 3
     deck = copy(DECK)
