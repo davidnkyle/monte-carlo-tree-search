@@ -126,7 +126,7 @@ class CooperativeGameNode():
             return weighted
         return pd.Series(data=1, index=features)
 
-    def score_bayesian(self, parent_hand, c_param, r=1):
+    def score_bayesian(self, parent_hand, c_param, r=10):
         unknown_hand = self.state.unknown_hand(parent_hand)
         weights = self.features_from_hand(unknown_hand, weights=True)
         base_rate = self._number_of_wins_total/self._number_of_visits_total
@@ -139,10 +139,15 @@ class CooperativeGameNode():
             q_rate = q/q_sum
         raw_score = base_rate*n_rate.product()*q_rate.product()
         exploration = 0
-        if c_param != 0:
+        gr = self.state.game_result
+        if gr == 0:
+            raw_score = 0
+        elif c_param != 0:
             min_n = self.n.loc[weights.index, self.parent.state.turn].min()
-            if min_n == 0:
+            if gr == 1:
                 exploration = np.inf
+            elif min_n == 0:
+                exploration = 1000000
             else:
                 exploration = c_param*np.log(self.parent._number_of_visits_total) / min_n
         return raw_score + exploration
@@ -255,27 +260,33 @@ class CooperativeGameNode():
     def is_terminal_node(self):
         return self.state.is_game_over()
 
-    def rollout(self):
-        current_rollout_state = self.state
-        unknown_hands = deepcopy(self.unknown_hands)
-        # game_states = []
-        # unknown_hand_states = []
-        while not current_rollout_state.is_game_over():
-            # game_states.append(current_rollout_state)
-            # unknown_hand_states.append(unknown_hands)
-            turn = current_rollout_state.turn
-            hand = unknown_hands[current_rollout_state.turn]
-            possible_moves = current_rollout_state.get_legal_actions(hand)
-            action = self.rollout_policy(possible_moves)
-            # select_phase = current_rollout_state.select_goals_phase
-            # com_phase = current_rollout_state.communication_phase
-            for idx in range(current_rollout_state.players):
-                if len(unknown_hands[idx]) != current_rollout_state.num_unknown[idx]:
-                    raise ValueError('uh oh')
-            current_rollout_state = current_rollout_state.move(action)
-            unknown_hands = [current_rollout_state.unknown_hand(h) for h in unknown_hands]
-
-        return current_rollout_state.game_result
+    def rollout(self, iterations: int = 1):
+        max_result = 0
+        for _ in range(iterations):
+            current_rollout_state = self.state
+            unknown_hands = deepcopy(self.unknown_hands)
+            # game_states = []
+            # unknown_hand_states = []
+            while not current_rollout_state.is_game_over():
+                # game_states.append(current_rollout_state)
+                # unknown_hand_states.append(unknown_hands)
+                hand = unknown_hands[current_rollout_state.turn]
+                possible_moves = current_rollout_state.get_legal_actions(hand)
+                game_result = 0
+                while (len(possible_moves) > 0) and (game_result == 0):
+                    action = possible_moves.pop(np.random.randint(len(possible_moves)))
+                    new_state = current_rollout_state.move(action)
+                    game_result = new_state.game_result
+                    if game_result == 1:
+                        break
+                current_rollout_state = new_state
+                unknown_hands = [current_rollout_state.unknown_hand(h) for h in unknown_hands]
+            gr = current_rollout_state.game_result
+            if gr > max_result:
+                max_result = gr
+            if max_result == 1:
+                break
+        return max_result
 
     def feature_df(self):
         all_features = pd.DataFrame(index=FEATURES)
@@ -306,7 +317,7 @@ class CooperativeGameNode():
         # print(next_move)
         return possible_moves[next_move%len(possible_moves)]
 
-    def relative_frequency(self, p=1):
+    def relative_frequency(self, p=10):
         cards = self.state.possible_cards.index
         players = self.state.possible_cards.columns
         highs = self.n.loc[['highest_{}'.format(c) for c in cards], players]
